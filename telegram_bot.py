@@ -176,10 +176,21 @@ class MetaAdsExecutor:
 
     def _post(self, endpoint, data):
         data["access_token"] = self.token
+        logger.info(f"POST {endpoint} | data keys: {list(data.keys())}")
         resp = requests.post(f"{self.base_url}/{endpoint}", data=data, timeout=30)
         result = resp.json()
         if "error" in result:
-            raise Exception(f"Meta API Error: {result['error'].get('message', 'Unknown')}")
+            err = result["error"]
+            detail = err.get("message", "Unknown")
+            subcode = err.get("error_subcode", "")
+            user_msg = err.get("error_user_msg", "")
+            full_error = f"Meta API Error [{err.get('code', '?')}]: {detail}"
+            if subcode:
+                full_error += f" (subcode: {subcode})"
+            if user_msg:
+                full_error += f" — {user_msg}"
+            logger.error(f"META API FULL RESPONSE: {json.dumps(result, indent=2)}")
+            raise Exception(full_error)
         return result
 
     def _get(self, endpoint, params=None):
@@ -189,77 +200,156 @@ class MetaAdsExecutor:
         resp = requests.get(f"{self.base_url}/{endpoint}", params=params, timeout=30)
         return resp.json()
 
+    def auto_detect_page_id(self):
+        """Auto-detect Page ID if not configured."""
+        if self.page_id:
+            return self.page_id
+        logger.info("No PAGE_ID configured, auto-detecting...")
+        pages = self._get("me/accounts", {"fields": "id,name"})
+        if pages and pages.get("data") and len(pages["data"]) > 0:
+            self.page_id = pages["data"][0]["id"]
+            logger.info(f"Auto-detected Page: {pages['data'][0].get('name')} (ID: {self.page_id})")
+            return self.page_id
+        return None
+
+    def auto_detect_ig_id(self):
+        """Auto-detect Instagram Business Account ID."""
+        if self.ig_actor_id:
+            return self.ig_actor_id
+        if not self.page_id:
+            return None
+        ig = self._get(f"{self.page_id}", {"fields": "instagram_business_account"})
+        if ig and ig.get("instagram_business_account"):
+            self.ig_actor_id = ig["instagram_business_account"]["id"]
+            logger.info(f"Auto-detected Instagram: ID {self.ig_actor_id}")
+        return self.ig_actor_id
+
     def search_location(self, query):
-        result = self._get("search", {"type": "adgeolocation", "location_types": '["city"]', "q": query})
-        if result.get("data"):
-            loc = result["data"][0]
-            return {"key": loc["key"], "name": loc["name"], "radius": 0, "distance_unit": "kilometer"}
+        """Search for a city. Returns location dict or None."""
+        try:
+            result = self._get("search", {"type": "adgeolocation", "location_types": '["city"]', "q": query})
+            if result.get("data") and len(result["data"]) > 0:
+                loc = result["data"][0]
+                logger.info(f"Location found: {query} → key={loc['key']}")
+                return {"key": str(loc["key"]), "name": loc["name"], "radius": 0, "distance_unit": "kilometer"}
+        except Exception as e:
+            logger.warning(f"Location search failed for '{query}': {e}")
         return None
 
     def search_interest(self, query):
-        result = self._get("search", {"type": "adinterest", "q": query})
-        if result.get("data"):
-            return {"id": result["data"][0]["id"], "name": result["data"][0]["name"]}
+        """Search for a targeting interest. Returns interest dict or None."""
+        try:
+            result = self._get("search", {"type": "adinterest", "q": query})
+            if result.get("data") and len(result["data"]) > 0:
+                interest = result["data"][0]
+                logger.info(f"Interest found: {query} → id={interest['id']}")
+                return {"id": str(interest["id"]), "name": interest["name"]}
+        except Exception as e:
+            logger.warning(f"Interest search failed for '{query}': {e}")
         return None
 
     def create_full_campaign(self, campaign: dict) -> dict:
         """Create the complete campaign structure. Returns IDs."""
-        results = {"success": False, "errors": []}
+        results = {"success": False, "errors": [], "warnings": []}
 
         try:
-            # 1. Create Campaign
+            # ── VALIDATION ──
+            # Auto-detect page ID if missing
+            self.auto_detect_page_id()
+            self.auto_detect_ig_id()
+
+            if not self.page_id:
+                raise Exception(
+                    "Facebook Page ID not found. Please add META_PAGE_ID to your Railway variables. "
+                    "Find it at: facebook.com/your_page → About → scroll to bottom → Page ID"
+                )
+
+            logger.info(f"Using Page ID: {self.page_id}")
+            logger.info(f"Using IG Actor: {self.ig_actor_id or 'None'}")
+            logger.info(f"Using Ad Account: {self.account_id}")
+
+            # ── 1. CREATE CAMPAIGN ──
+            logger.info("Step 1: Creating campaign...")
             camp_result = self._post(f"{self.account_id}/campaigns", {
                 "name": campaign["campaign_name"],
                 "objective": campaign.get("objective", "OUTCOME_TRAFFIC"),
                 "status": "PAUSED",
-                "special_ad_categories": "[]",
+                "special_ad_categories": json.dumps([]),
             })
             campaign_id = camp_result["id"]
             results["campaign_id"] = campaign_id
             logger.info(f"Campaign created: {campaign_id}")
 
-            # 2. Build targeting
+            # ── 2. BUILD TARGETING ──
+            logger.info("Step 2: Building targeting...")
             adset = campaign.get("adset", {})
             targeting = {
-                "age_min": adset.get("age_min", 20),
-                "age_max": adset.get("age_max", 35),
+                "age_min": int(adset.get("age_min", 20)),
+                "age_max": int(adset.get("age_max", 35)),
             }
 
+            # Gender
             gender_map = {"women": [2], "female": [2], "men": [1], "male": [1]}
-            genders = gender_map.get(adset.get("gender", "").lower(), [])
+            genders = gender_map.get(str(adset.get("gender", "")).lower(), [])
             if genders:
                 targeting["genders"] = genders
 
             # Resolve locations
             cities = []
             for loc in adset.get("locations", []):
-                resolved = self.search_location(loc if isinstance(loc, str) else loc.get("name", ""))
+                loc_name = loc if isinstance(loc, str) else loc.get("name", "")
+                if not loc_name:
+                    continue
+                resolved = self.search_location(loc_name)
                 if resolved:
                     cities.append(resolved)
+                else:
+                    results["warnings"].append(f"Location not found: {loc_name}")
+
             if cities:
                 targeting["geo_locations"] = {"cities": cities}
+            else:
+                # Fallback to Indonesia if no cities found
+                logger.warning("No cities found, falling back to Indonesia country targeting")
+                targeting["geo_locations"] = {"countries": ["ID"]}
+                results["warnings"].append("Cities not found, used Indonesia-wide targeting instead")
 
-            # Resolve interests
+            # Resolve interests (optional - campaign works without them)
             interests = []
             for interest in adset.get("interests", []):
-                resolved = self.search_interest(interest if isinstance(interest, str) else interest.get("name", ""))
+                interest_name = interest if isinstance(interest, str) else interest.get("name", "")
+                if not interest_name:
+                    continue
+                resolved = self.search_interest(interest_name)
                 if resolved:
                     interests.append(resolved)
+
             if interests:
                 targeting["flexible_spec"] = [{"interests": interests}]
+            else:
+                results["warnings"].append("No interests could be resolved, using broad targeting")
 
-            # 3. Create Ad Set
+            logger.info(f"Targeting built: {json.dumps(targeting)[:200]}")
+
+            # ── 3. CREATE AD SET ──
+            logger.info("Step 3: Creating ad set...")
+            daily_budget = adset.get("daily_budget", 200000)
+            # Ensure budget is an integer string
+            daily_budget = str(int(float(str(daily_budget).replace(",", "").replace(".", ""))))
+
             adset_data = {
                 "name": adset.get("name", f"AdSet_{datetime.now().strftime('%Y%m%d')}"),
                 "campaign_id": campaign_id,
-                "daily_budget": str(adset.get("daily_budget", 200000)),
+                "daily_budget": daily_budget,
                 "billing_event": "IMPRESSIONS",
-                "optimization_goal": adset.get("optimization_goal", "LINK_CLICKS"),
+                "optimization_goal": adset.get("optimization_goal", "LINK_CLICKS").upper(),
                 "targeting": json.dumps(targeting),
                 "status": "PAUSED",
             }
 
-            if campaign.get("objective", "").upper() in ("OUTCOME_TRAFFIC",):
+            # Add promoted_object for traffic campaigns
+            objective = campaign.get("objective", "OUTCOME_TRAFFIC").upper()
+            if objective in ("OUTCOME_TRAFFIC",):
                 adset_data["destination_type"] = "WEBSITE"
 
             adset_result = self._post(f"{self.account_id}/adsets", adset_data)
@@ -267,35 +357,50 @@ class MetaAdsExecutor:
             results["adset_id"] = adset_id
             logger.info(f"Ad Set created: {adset_id}")
 
-            # 4. Create Ads for each variant (without image — user uploads later)
+            # ── 4. CREATE AD CREATIVES + ADS ──
+            logger.info("Step 4: Creating ad creatives...")
             results["ad_ids"] = []
             results["creative_ids"] = []
 
+            website_url = campaign.get("website_url", "https://lovemaya.co")
+
             for variant in campaign.get("ad_variants", []):
+                variant_name = variant.get("name", "Ad")
                 try:
-                    website_url = campaign.get("website_url", "https://lovemaya.co")
-                    creative_data = {
-                        "name": variant.get("name", "Creative"),
-                        "object_story_spec": json.dumps({
-                            "page_id": self.page_id,
-                            "link_data": {
-                                "message": variant.get("primary_text", ""),
-                                "link": website_url,
-                                "name": variant.get("headline", ""),
-                                "description": variant.get("description", ""),
-                                "call_to_action": {
-                                    "type": variant.get("cta", "SHOP_NOW"),
-                                    "value": {"link": website_url}
-                                }
-                            }
-                        }),
+                    # Build the object_story_spec
+                    link_data = {
+                        "message": variant.get("primary_text", ""),
+                        "link": website_url,
+                        "name": variant.get("headline", ""),
+                        "description": variant.get("description", ""),
+                        "call_to_action": {
+                            "type": variant.get("cta", "SHOP_NOW").upper(),
+                            "value": {"link": website_url}
+                        }
                     }
+
+                    object_story_spec = {
+                        "page_id": self.page_id,
+                        "link_data": link_data,
+                    }
+
+                    # Add Instagram actor if available
+                    if self.ig_actor_id:
+                        object_story_spec["instagram_actor_id"] = self.ig_actor_id
+
+                    creative_data = {
+                        "name": variant_name,
+                        "object_story_spec": json.dumps(object_story_spec),
+                    }
+
+                    logger.info(f"Creating creative: {variant_name}")
                     creative_result = self._post(f"{self.account_id}/adcreatives", creative_data)
                     creative_id = creative_result["id"]
                     results["creative_ids"].append(creative_id)
 
+                    logger.info(f"Creating ad for creative {creative_id}")
                     ad_result = self._post(f"{self.account_id}/ads", {
-                        "name": variant.get("name", "Ad"),
+                        "name": variant_name,
                         "adset_id": adset_id,
                         "creative": json.dumps({"creative_id": creative_id}),
                         "status": "PAUSED",
@@ -304,10 +409,14 @@ class MetaAdsExecutor:
                     logger.info(f"Ad created: {ad_result['id']}")
 
                 except Exception as e:
-                    results["errors"].append(f"Ad variant '{variant.get('name')}': {str(e)}")
+                    error_msg = f"Ad '{variant_name}': {str(e)}"
+                    results["errors"].append(error_msg)
                     logger.error(f"Error creating ad variant: {e}")
 
+            # Consider success if at least campaign + adset were created
             results["success"] = True
+            if results["errors"]:
+                results["success_note"] = "Campaign and ad set created, but some ads failed (see errors)"
 
         except Exception as e:
             results["errors"].append(str(e))
@@ -513,10 +622,21 @@ async def handle_approval(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"→ Then activate the campaign\n"
                 f"→ Or use /status {result.get('campaign_id', '')} to check"
             )
+            if result.get("warnings"):
+                msg += f"\n\n⚠️ Notes:\n" + "\n".join(result["warnings"])
             if result.get("errors"):
-                msg += f"\n\n⚠️ Warnings:\n" + "\n".join(result["errors"])
+                msg += f"\n\n⚠️ Some ads had issues:\n" + "\n".join(result["errors"])
         else:
-            msg = f"❌ Campaign creation failed:\n" + "\n".join(result.get("errors", ["Unknown error"]))
+            errors_text = "\n".join(result.get("errors", ["Unknown error"]))
+            msg = (
+                f"❌ Campaign creation failed:\n\n"
+                f"{errors_text}\n\n"
+                f"💡 Common fixes:\n"
+                f"• 'Invalid parameter' → Check META_PAGE_ID is correct\n"
+                f"• 'Invalid token' → Refresh META_ACCESS_TOKEN\n"
+                f"• 'Permission' → Token needs ads_management permission\n\n"
+                f"Check Railway logs for full error details."
+            )
 
         await query.edit_message_text(msg)
 
