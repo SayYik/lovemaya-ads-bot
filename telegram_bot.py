@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-BOT_VERSION = "v3.1"  # Change this to verify Railway deploys the latest file
+BOT_VERSION = "v4.1"  # Change this to verify Railway deploys the latest file
 """
 Lovemaya Meta Ads Bot
 ======================
@@ -55,6 +55,7 @@ META_ACCESS_TOKEN = os.getenv("META_ACCESS_TOKEN", "")
 META_PAGE_ID = os.getenv("META_PAGE_ID", "")
 META_IG_ACTOR_ID = os.getenv("META_IG_ACTOR_ID", "")
 MANUS_API_KEY = os.getenv("MANUS_API_KEY", "")
+TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY", "")  # For AI image generation
 ALLOWED_USER_IDS = [int(x.strip()) for x in os.getenv("ALLOWED_USER_IDS", "").split(",") if x.strip()]
 
 # ─────────────────────────────────────────────
@@ -363,7 +364,11 @@ RESPOND WITH VALID JSON ONLY (no markdown, no ```). Use this exact structure:
       "angle": "[angle]"
     }
   ],
-  "image_prompt": "A detailed Ideogram.ai prompt for the ad image...",
+  "image_prompts": [
+    "Image option 1: [detailed prompt — product-focused, clean lifestyle shot, 1:1 ratio]",
+    "Image option 2: [detailed prompt — sensory/emotional mood, warm colors, 1:1 ratio]",
+    "Image option 3: [detailed prompt — bold/eye-catching, creative composition, 1:1 ratio]"
+  ],
   "policy_check": "No policy issues found.",
   "manus_instructions": "Step-by-step instructions for Manus AI to create this in Meta Ads Manager...",
   "summary": "A short 2-3 line summary for the Telegram reply"
@@ -439,6 +444,293 @@ def generate_campaign_with_claude(brief_text: str) -> dict:
 # META ADS API — CAMPAIGN CREATOR
 # ─────────────────────────────────────────────
 
+# ─────────────────────────────────────────────
+# AI IMAGE & VIDEO GENERATION (Higgsfield AI + Together AI fallback)
+# ─────────────────────────────────────────────
+
+HIGGSFIELD_API_KEY = os.getenv("HIGGSFIELD_API_KEY", "")
+LOGO_PATH = os.path.join(os.path.dirname(__file__), "logo.png")  # Put your logo.png here
+
+
+def add_logo_to_image(image_path: str) -> str:
+    """Overlay the Lovemaya logo on the bottom-right of the image."""
+    if not os.path.exists(LOGO_PATH):
+        logger.info("No logo.png found — skipping logo overlay")
+        return image_path
+
+    try:
+        from PIL import Image
+        img = Image.open(image_path).convert("RGBA")
+        logo = Image.open(LOGO_PATH).convert("RGBA")
+
+        # Resize logo to 15% of image width
+        logo_width = int(img.width * 0.15)
+        logo_ratio = logo_width / logo.width
+        logo_height = int(logo.height * logo_ratio)
+        logo = logo.resize((logo_width, logo_height), Image.LANCZOS)
+
+        # Position: bottom-right with padding
+        padding = int(img.width * 0.03)
+        x = img.width - logo_width - padding
+        y = img.height - logo_height - padding
+
+        # Paste with transparency
+        img.paste(logo, (x, y), logo)
+
+        # Save as RGB (for Meta upload compatibility)
+        output = img.convert("RGB")
+        output.save(image_path, "PNG")
+        logger.info(f"Logo added to {image_path}")
+        return image_path
+
+    except ImportError:
+        logger.warning("Pillow not installed — skipping logo overlay. Run: pip install Pillow")
+        return image_path
+    except Exception as e:
+        logger.error(f"Logo overlay error: {e}")
+        return image_path
+
+
+def generate_image_higgsfield(prompt: str, index: int = 0) -> str | None:
+    """Generate an image using Higgsfield AI API. Returns file path or None."""
+    if not HIGGSFIELD_API_KEY:
+        return None
+
+    try:
+        import time as _time
+
+        # Step 1: Submit generation request
+        resp = requests.post(
+            "https://api.higgsfield.ai/v1/generations",
+            headers={
+                "Authorization": f"Bearer {HIGGSFIELD_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "task": "text-to-image",
+                "model": "flux",
+                "prompt": prompt,
+                "width": 1080,
+                "height": 1080,
+                "steps": 30,
+            },
+            timeout=30,
+        )
+        data = resp.json()
+        gen_id = data.get("id") or data.get("generation_id")
+        if not gen_id:
+            # If response contains direct URL or b64
+            output_url = data.get("output", {}).get("url") or data.get("url")
+            if output_url:
+                return _download_image(output_url, index)
+            logger.error(f"Higgsfield: no generation ID returned: {data}")
+            return None
+
+        # Step 2: Poll for completion (max 90 seconds)
+        for _ in range(30):
+            _time.sleep(3)
+            status_resp = requests.get(
+                f"https://api.higgsfield.ai/v1/generations/{gen_id}",
+                headers={"Authorization": f"Bearer {HIGGSFIELD_API_KEY}"},
+                timeout=15,
+            )
+            status_data = status_resp.json()
+            status = status_data.get("status", "")
+
+            if status == "completed":
+                output_url = (status_data.get("output", {}).get("url")
+                              or status_data.get("url")
+                              or status_data.get("result", {}).get("url"))
+                if output_url:
+                    return _download_image(output_url, index)
+                logger.error(f"Higgsfield completed but no URL: {status_data}")
+                return None
+            elif status in ("failed", "error", "cancelled"):
+                logger.error(f"Higgsfield generation failed: {status_data}")
+                return None
+
+        logger.error("Higgsfield: generation timed out after 90s")
+        return None
+
+    except Exception as e:
+        logger.error(f"Higgsfield error: {e}")
+        return None
+
+
+def generate_video_higgsfield(prompt: str, image_path: str = None) -> str | None:
+    """Generate a video using Higgsfield AI. Returns file path or None."""
+    if not HIGGSFIELD_API_KEY:
+        return None
+
+    try:
+        import time as _time
+
+        payload = {
+            "task": "image-to-video" if image_path else "text-to-video",
+            "prompt": prompt,
+            "duration": 5,
+            "fps": 30,
+            "motion_intensity": "medium",
+        }
+        if image_path:
+            # For image-to-video, we'd need to upload or provide URL
+            # For now, use text-to-video as fallback
+            payload["task"] = "text-to-video"
+
+        resp = requests.post(
+            "https://api.higgsfield.ai/v1/generations",
+            headers={
+                "Authorization": f"Bearer {HIGGSFIELD_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=30,
+        )
+        data = resp.json()
+        gen_id = data.get("id") or data.get("generation_id")
+        if not gen_id:
+            logger.error(f"Higgsfield video: no gen ID: {data}")
+            return None
+
+        # Poll for completion (videos take longer — max 3 min)
+        for _ in range(60):
+            _time.sleep(3)
+            status_resp = requests.get(
+                f"https://api.higgsfield.ai/v1/generations/{gen_id}",
+                headers={"Authorization": f"Bearer {HIGGSFIELD_API_KEY}"},
+                timeout=15,
+            )
+            status_data = status_resp.json()
+            status = status_data.get("status", "")
+
+            if status == "completed":
+                output_url = (status_data.get("output", {}).get("url")
+                              or status_data.get("url")
+                              or status_data.get("result", {}).get("url"))
+                if output_url:
+                    return _download_video(output_url)
+                return None
+            elif status in ("failed", "error", "cancelled"):
+                logger.error(f"Higgsfield video failed: {status_data}")
+                return None
+
+        logger.error("Higgsfield video: timed out")
+        return None
+
+    except Exception as e:
+        logger.error(f"Higgsfield video error: {e}")
+        return None
+
+
+def _download_image(url: str, index: int) -> str | None:
+    """Download an image from URL and save locally."""
+    try:
+        resp = requests.get(url, timeout=30)
+        if resp.status_code == 200:
+            tmp_dir = os.path.join(os.path.dirname(__file__), "tmp_images")
+            os.makedirs(tmp_dir, exist_ok=True)
+            filepath = os.path.join(tmp_dir, f"ad_image_{index}_{datetime.now().strftime('%Y%m%d%H%M%S')}.png")
+            with open(filepath, "wb") as f:
+                f.write(resp.content)
+            # Add logo overlay
+            filepath = add_logo_to_image(filepath)
+            logger.info(f"Image downloaded: {filepath}")
+            return filepath
+    except Exception as e:
+        logger.error(f"Image download error: {e}")
+    return None
+
+
+def _download_video(url: str) -> str | None:
+    """Download a video from URL and save locally."""
+    try:
+        resp = requests.get(url, timeout=60)
+        if resp.status_code == 200:
+            tmp_dir = os.path.join(os.path.dirname(__file__), "tmp_images")
+            os.makedirs(tmp_dir, exist_ok=True)
+            filepath = os.path.join(tmp_dir, f"ad_video_{datetime.now().strftime('%Y%m%d%H%M%S')}.mp4")
+            with open(filepath, "wb") as f:
+                f.write(resp.content)
+            logger.info(f"Video downloaded: {filepath}")
+            return filepath
+    except Exception as e:
+        logger.error(f"Video download error: {e}")
+    return None
+
+
+def generate_image_together(prompt: str, index: int = 0) -> str | None:
+    """Fallback: Generate image using Together AI FLUX model."""
+    if not TOGETHER_API_KEY:
+        return None
+
+    try:
+        import base64
+        resp = requests.post(
+            "https://api.together.xyz/v1/images/generations",
+            headers={
+                "Authorization": f"Bearer {TOGETHER_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "black-forest-labs/FLUX.1-schnell-Free",
+                "prompt": prompt,
+                "width": 1080,
+                "height": 1080,
+                "steps": 4,
+                "n": 1,
+                "response_format": "b64_json",
+            },
+            timeout=60,
+        )
+        data = resp.json()
+
+        if "data" in data and len(data["data"]) > 0:
+            img_b64 = data["data"][0].get("b64_json", "")
+            if img_b64:
+                img_bytes = base64.b64decode(img_b64)
+                tmp_dir = os.path.join(os.path.dirname(__file__), "tmp_images")
+                os.makedirs(tmp_dir, exist_ok=True)
+                filepath = os.path.join(tmp_dir, f"ad_image_{index}_{datetime.now().strftime('%Y%m%d%H%M%S')}.png")
+                with open(filepath, "wb") as f:
+                    f.write(img_bytes)
+                filepath = add_logo_to_image(filepath)
+                logger.info(f"Image generated (Together): {filepath}")
+                return filepath
+        logger.error(f"Together image failed: {data}")
+        return None
+
+    except Exception as e:
+        logger.error(f"Together image error: {e}")
+        return None
+
+
+def generate_image_auto(prompt: str, index: int = 0) -> str | None:
+    """Auto-select image generator: Higgsfield first, Together AI fallback."""
+    # Try Higgsfield first
+    result = generate_image_higgsfield(prompt, index)
+    if result:
+        return result
+    # Fallback to Together AI
+    result = generate_image_together(prompt, index)
+    if result:
+        return result
+    logger.warning("No image generator available")
+    return None
+
+
+def generate_multiple_images(prompts: list) -> list:
+    """Generate multiple images from a list of prompts. Returns list of file paths."""
+    results = []
+    for i, prompt in enumerate(prompts):
+        path = generate_image_auto(prompt, i)
+        results.append(path)
+    return results
+
+
+# Store generated images for each user
+pending_images = {}
+
+
 class MetaAdsExecutor:
     """Creates campaigns via Meta Marketing API."""
 
@@ -496,6 +788,30 @@ class MetaAdsExecutor:
             logger.info(f"Auto-detected Page: {pages['data'][0].get('name')} (ID: {self.page_id})")
             return self.page_id
         return None
+
+    def upload_image(self, image_path: str) -> str | None:
+        """Upload an image to Meta and return the image hash."""
+        try:
+            with open(image_path, "rb") as img_file:
+                resp = requests.post(
+                    f"{self.base_url}/{self.account_id}/adimages",
+                    data={"access_token": self.token},
+                    files={"filename": img_file},
+                    timeout=60,
+                )
+            result = resp.json()
+            if "images" in result:
+                # The response has format: {"images": {"filename.png": {"hash": "xxx"}}}
+                for key, val in result["images"].items():
+                    image_hash = val.get("hash")
+                    logger.info(f"Image uploaded to Meta: hash={image_hash}")
+                    return image_hash
+            else:
+                logger.error(f"Image upload failed: {result}")
+                return None
+        except Exception as e:
+            logger.error(f"Image upload error: {e}")
+            return None
 
     def auto_detect_ig_id(self):
         """Auto-detect Instagram Business Account ID."""
@@ -733,6 +1049,11 @@ class MetaAdsExecutor:
                             "value": {"link": website_url}
                         }
                     }
+
+                    # Attach image if uploaded
+                    img_hash = campaign.get("_image_hash")
+                    if img_hash:
+                        link_data["image_hash"] = img_hash
 
                     object_story_spec = {
                         "page_id": self.page_id,
@@ -1222,8 +1543,7 @@ async def handle_brief(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Store for approval
         pending_campaigns[user_id] = campaign
 
-        # Step 4: Send preview for approval
-        summary = campaign.get("summary", "Campaign generated successfully.")
+        # Step 4: Send campaign preview
         variants_preview = ""
         for v in campaign.get("ad_variants", []):
             lang = v.get("language", "")
@@ -1247,24 +1567,84 @@ async def handle_brief(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"age {campaign.get('adset', {}).get('age_min', 18)}-{campaign.get('adset', {}).get('age_max', 65)}\n"
             f"📍 {', '.join(str(l) for l in campaign.get('adset', {}).get('locations', []))}\n\n"
             f"📝 Ad Variants:{variants_preview}\n\n"
-            f"🖼 Image Prompt:\n{campaign.get('image_prompt', 'N/A')[:200]}...\n\n"
-            f"🛡 Policy: {campaign.get('policy_check', 'No issues')}\n\n"
-            f"What should I do?"
+            f"🛡 Policy: {campaign.get('policy_check', 'No issues')}"
         )
 
-        # Action buttons
-        keyboard = [
-            [
-                InlineKeyboardButton("🚀 Create via API", callback_data="exec_api"),
-                InlineKeyboardButton("🤖 Send to Manus", callback_data="exec_manus"),
-            ],
-            [
-                InlineKeyboardButton("📋 Copy Instructions", callback_data="exec_copy"),
-                InlineKeyboardButton("❌ Cancel", callback_data="exec_cancel"),
-            ],
-        ]
+        await status_msg.edit_text(preview_text)
 
-        await status_msg.edit_text(preview_text, reply_markup=InlineKeyboardMarkup(keyboard))
+        # Step 5: Generate AI images (if Together API is configured)
+        image_prompts = campaign.get("image_prompts", [])
+        # Fallback: old single image_prompt field
+        if not image_prompts and campaign.get("image_prompt"):
+            image_prompts = [campaign["image_prompt"]]
+
+        if (HIGGSFIELD_API_KEY or TOGETHER_API_KEY) and image_prompts:
+            await update.message.reply_text("🎨 Generating ad images... (this takes ~30 seconds)")
+
+            generated_paths = generate_multiple_images(image_prompts[:3])
+            valid_images = [(i, p) for i, p in enumerate(generated_paths) if p]
+
+            if valid_images:
+                # Store images for this user
+                pending_images[user_id] = {
+                    "paths": generated_paths,
+                    "prompts": image_prompts,
+                }
+
+                # Send each image with a selection button
+                for idx, path in valid_images:
+                    try:
+                        with open(path, "rb") as photo:
+                            await update.message.reply_photo(
+                                photo=photo,
+                                caption=f"🖼 Option {idx + 1}: {image_prompts[idx][:150]}...",
+                                reply_markup=InlineKeyboardMarkup([[
+                                    InlineKeyboardButton(f"✅ Use Image {idx + 1}", callback_data=f"pick_img_{idx}"),
+                                ]]),
+                            )
+                    except Exception as img_err:
+                        logger.error(f"Failed to send image {idx}: {img_err}")
+
+                # Also offer to skip image selection
+                await update.message.reply_text(
+                    "👆 Pick an image above, or choose an action:",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🚀 Create without image", callback_data="exec_api")],
+                        [InlineKeyboardButton("❌ Cancel", callback_data="exec_cancel")],
+                    ]),
+                )
+            else:
+                # Image generation failed — show normal buttons
+                keyboard = [
+                    [
+                        InlineKeyboardButton("🚀 Create via API", callback_data="exec_api"),
+                        InlineKeyboardButton("🤖 Send to Manus", callback_data="exec_manus"),
+                    ],
+                    [
+                        InlineKeyboardButton("📋 Copy Instructions", callback_data="exec_copy"),
+                        InlineKeyboardButton("❌ Cancel", callback_data="exec_cancel"),
+                    ],
+                ]
+                await update.message.reply_text(
+                    "⚠️ Image generation failed. You can still create the campaign:",
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                )
+        else:
+            # No Together API — show normal approval buttons
+            keyboard = [
+                [
+                    InlineKeyboardButton("🚀 Create via API", callback_data="exec_api"),
+                    InlineKeyboardButton("🤖 Send to Manus", callback_data="exec_manus"),
+                ],
+                [
+                    InlineKeyboardButton("📋 Copy Instructions", callback_data="exec_copy"),
+                    InlineKeyboardButton("❌ Cancel", callback_data="exec_cancel"),
+                ],
+            ]
+            await update.message.reply_text(
+                "What should I do?",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            )
 
     except json.JSONDecodeError as e:
         await status_msg.edit_text(f"⚠️ Claude returned invalid JSON. Try rephrasing your brief.\nError: {e}")
@@ -1282,12 +1662,75 @@ async def handle_approval(update: Update, context: ContextTypes.DEFAULT_TYPE):
     action = query.data
     campaign = pending_campaigns.get(user_id)
 
-    if not campaign:
+    if not campaign and not action.startswith("pick_img_"):
         await query.edit_message_text("⚠️ No pending campaign found. Send a new brief.")
         return
 
-    # ── EXECUTE VIA META API ──
-    if action == "exec_api":
+    # ── PICK IMAGE ──
+    if action.startswith("pick_img_"):
+        img_index = int(action.split("_")[-1])
+        user_images = pending_images.get(user_id, {})
+        paths = user_images.get("paths", [])
+
+        if img_index < len(paths) and paths[img_index]:
+            # Store selected image path in campaign
+            if campaign:
+                campaign["_selected_image"] = paths[img_index]
+                pending_campaigns[user_id] = campaign
+
+            video_btn = []
+            if HIGGSFIELD_API_KEY:
+                video_btn = [InlineKeyboardButton("🎬 Generate Video from this Image", callback_data=f"gen_video_{img_index}")]
+
+            await query.edit_message_text(
+                f"✅ Image {img_index + 1} selected!\n\nNow choose:",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🚀 Create Campaign with this Image", callback_data="exec_api_with_image")],
+                    video_btn if video_btn else [],
+                    [InlineKeyboardButton("❌ Cancel", callback_data="exec_cancel")],
+                ]),
+            )
+        else:
+            await query.edit_message_text("⚠️ Image not found. Try again or create without image.")
+        return
+
+    # ── GENERATE VIDEO FROM SELECTED IMAGE ──
+    if action.startswith("gen_video_"):
+        img_index = int(action.split("_")[-1])
+        user_images = pending_images.get(user_id, {})
+        paths = user_images.get("paths", [])
+        prompts = user_images.get("prompts", [])
+
+        if img_index < len(paths) and paths[img_index]:
+            await query.edit_message_text("🎬 Generating video from your image... (this takes ~1-2 minutes)")
+
+            video_prompt = prompts[img_index] if img_index < len(prompts) else "Animate this product image with gentle motion"
+            video_path = generate_video_higgsfield(video_prompt, paths[img_index])
+
+            if video_path:
+                try:
+                    with open(video_path, "rb") as video_file:
+                        await query.message.reply_video(
+                            video=video_file,
+                            caption="🎬 Ad video generated! You can download and use this in Ads Manager.",
+                            reply_markup=InlineKeyboardMarkup([
+                                [InlineKeyboardButton("🚀 Create Campaign with Image", callback_data="exec_api_with_image")],
+                                [InlineKeyboardButton("❌ Cancel", callback_data="exec_cancel")],
+                            ]),
+                        )
+                except Exception as vid_err:
+                    await query.message.reply_text(f"⚠️ Couldn't send video: {vid_err}")
+            else:
+                await query.message.reply_text(
+                    "⚠️ Video generation failed. You can still create the campaign with the image:",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🚀 Create Campaign with Image", callback_data="exec_api_with_image")],
+                    ]),
+                )
+        return
+
+    # ── EXECUTE VIA META API (with or without image) ──
+    if action in ("exec_api", "exec_api_with_image"):
         if not META_ACCESS_TOKEN:
             await query.edit_message_text(
                 "⚠️ Meta API not configured.\n"
@@ -1297,20 +1740,37 @@ async def handle_approval(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         acct = campaign.get("_ad_account", AD_ACCOUNTS[DEFAULT_AD_ACCOUNT])
-        await query.edit_message_text(f"⏳ Creating campaign via Meta API...\n📂 Account: {acct['name']}")
+        selected_image = campaign.get("_selected_image") if action == "exec_api_with_image" else None
+
+        status_text = f"⏳ Creating campaign via Meta API...\n📂 Account: {acct['name']}"
+        if selected_image:
+            status_text += "\n🖼 Uploading selected image..."
+        await query.edit_message_text(status_text)
 
         executor = MetaAdsExecutor(ad_account_id=acct["id"])
+
+        # Upload image to Meta if selected
+        image_hash = None
+        if selected_image:
+            image_hash = executor.upload_image(selected_image)
+            if image_hash:
+                campaign["_image_hash"] = image_hash
+                logger.info(f"Image uploaded to Meta: {image_hash}")
+            else:
+                logger.warning("Image upload failed — creating campaign without image")
+
         result = executor.create_full_campaign(campaign)
 
         if result["success"]:
+            has_image = "🖼 Image attached!" if image_hash else "→ Upload ad images in Ads Manager"
             msg = (
                 f"✅ Campaign created!\n\n"
                 f"Campaign ID: {result.get('campaign_id', 'N/A')}\n"
                 f"Ad Set ID: {result.get('adset_id', 'N/A')}\n"
                 f"Ads created: {len(result.get('ad_ids', []))}\n\n"
                 f"⚠️ Status: PAUSED\n"
-                f"→ Upload ad images in Ads Manager\n"
-                f"→ Then activate the campaign\n"
+                f"{has_image}\n"
+                f"→ Review and activate in Ads Manager\n"
                 f"→ Or use /status {result.get('campaign_id', '')} to check"
             )
             if result.get("warnings"):
