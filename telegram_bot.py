@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-BOT_VERSION = "v4.1"  # Change this to verify Railway deploys the latest file
+BOT_VERSION = "v4.2"  # Change this to verify Railway deploys the latest file
 """
 Lovemaya Meta Ads Bot
 ======================
@@ -1018,10 +1018,24 @@ class MetaAdsExecutor:
                 adset_data["daily_budget"] = daily_budget
                 logger.info(f"ABO mode: daily_budget {daily_budget} set on ad set")
 
-            # Add destination_type for traffic campaigns
+            # Add destination_type and promoted_object based on objective
             objective = campaign.get("objective", "OUTCOME_TRAFFIC").upper()
-            if objective in ("OUTCOME_TRAFFIC",):
+
+            if objective == "OUTCOME_TRAFFIC":
                 adset_data["destination_type"] = "WEBSITE"
+                adset_data["promoted_object"] = json.dumps({"page_id": self.page_id})
+            elif objective == "OUTCOME_SALES":
+                adset_data["destination_type"] = "WEBSITE"
+                adset_data["promoted_object"] = json.dumps({"page_id": self.page_id})
+            elif objective == "OUTCOME_LEADS":
+                adset_data["promoted_object"] = json.dumps({"page_id": self.page_id})
+            elif objective == "OUTCOME_ENGAGEMENT":
+                adset_data["promoted_object"] = json.dumps({"page_id": self.page_id})
+            elif objective == "OUTCOME_AWARENESS":
+                # Awareness usually doesn't need promoted_object, but add page_id just in case
+                adset_data["promoted_object"] = json.dumps({"page_id": self.page_id})
+
+            logger.info(f"Objective: {objective}, promoted_object set with page_id: {self.page_id}")
 
             adset_result = self._post(f"{self.account_id}/adsets", adset_data)
             adset_id = adset_result["id"]
