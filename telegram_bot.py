@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-BOT_VERSION = "v4.4"  # Change this to verify Railway deploys the latest file
+BOT_VERSION = "v4.5"  # Change this to verify Railway deploys the latest file
 """
 Lovemaya Meta Ads Bot
 ======================
@@ -1041,6 +1041,10 @@ class MetaAdsExecutor:
             if config.get("promoted_object"):
                 adset_data["promoted_object"] = json.dumps(config["promoted_object"])
 
+            # Store debug info for error reporting
+            results["debug_optimization_goal"] = opt_goal
+            results["debug_destination_type"] = config.get("destination_type", "none")
+
             # ALWAYS set this field — Meta requires it on every ad set
             adset_data["is_adset_budget_sharing_enabled"] = "false"
 
@@ -1806,9 +1810,14 @@ async def handle_approval(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 msg += f"\n\n⚠️ Some ads had issues:\n" + "\n".join(result["errors"])
         else:
             errors_text = "\n".join(result.get("errors", ["Unknown error"]))
+            # Include debug info so we can see what was sent
+            debug_obj = campaign.get("objective", "?")
+            debug_opt = result.get("debug_optimization_goal", "?")
+            debug_dest = result.get("debug_destination_type", "?")
             msg = (
                 f"❌ Campaign creation failed ({BOT_VERSION}):\n\n"
                 f"{errors_text}\n\n"
+                f"🔍 Debug: obj={debug_obj} opt={debug_opt} dest={debug_dest}\n\n"
                 f"💡 Common fixes:\n"
                 f"• 'Invalid parameter' → Check META_PAGE_ID is correct\n"
                 f"• 'Invalid token' → Refresh META_ACCESS_TOKEN\n"
