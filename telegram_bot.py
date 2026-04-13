@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-BOT_VERSION = "v4.5"  # Change this to verify Railway deploys the latest file
+BOT_VERSION = "v4.6"  # Change this to verify Railway deploys the latest file
 """
 Lovemaya Meta Ads Bot
 ======================
@@ -56,6 +56,7 @@ META_PAGE_ID = os.getenv("META_PAGE_ID", "")
 META_IG_ACTOR_ID = os.getenv("META_IG_ACTOR_ID", "")
 MANUS_API_KEY = os.getenv("MANUS_API_KEY", "")
 TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY", "")  # For AI image generation
+META_PIXEL_ID = os.getenv("META_PIXEL_ID", "")  # Facebook Pixel (needed for OUTCOME_SALES)
 ALLOWED_USER_IDS = [int(x.strip()) for x in os.getenv("ALLOWED_USER_IDS", "").split(",") if x.strip()]
 
 # ─────────────────────────────────────────────
@@ -875,10 +876,17 @@ class MetaAdsExecutor:
             daily_budget = adset.get("daily_budget", 200000)
             daily_budget = str(int(float(str(daily_budget).replace(",", "").replace(".", ""))))
 
-            logger.info(f"Step 1: Creating campaign... (Budget type: {budget_type})")
+            # Resolve objective (may be downgraded if pixel not set)
+            objective = campaign.get("objective", "OUTCOME_TRAFFIC").upper()
+            if objective == "OUTCOME_SALES" and not META_PIXEL_ID:
+                logger.warning("OUTCOME_SALES but no pixel — downgrading to OUTCOME_TRAFFIC")
+                objective = "OUTCOME_TRAFFIC"
+                results["warnings"].append("No Facebook Pixel → changed Sales to Traffic. Add META_PIXEL_ID in Railway for Sales.")
+
+            logger.info(f"Step 1: Creating campaign... (Budget type: {budget_type}, Objective: {objective})")
             campaign_data = {
                 "name": campaign["campaign_name"],
-                "objective": campaign.get("objective", "OUTCOME_TRAFFIC"),
+                "objective": objective,
                 "status": "PAUSED",
                 "special_ad_categories": json.dumps([]),
             }
@@ -999,7 +1007,7 @@ class MetaAdsExecutor:
             logger.info(f"Step 3: Creating ad set... (Budget type: {budget_type})")
 
             # Map objective to the correct optimization_goal, destination_type, and promoted_object
-            objective = campaign.get("objective", "OUTCOME_TRAFFIC").upper()
+            # (objective was already resolved and possibly downgraded in Step 1)
 
             OBJECTIVE_CONFIG = {
                 "OUTCOME_TRAFFIC": {
@@ -1007,8 +1015,9 @@ class MetaAdsExecutor:
                     "destination_type": "WEBSITE",
                 },
                 "OUTCOME_SALES": {
-                    "optimization_goal": "LINK_CLICKS",
+                    "optimization_goal": "OFFSITE_CONVERSIONS",
                     "destination_type": "WEBSITE",
+                    "promoted_object": {"pixel_id": META_PIXEL_ID, "custom_event_type": "PURCHASE"},
                 },
                 "OUTCOME_AWARENESS": {
                     "optimization_goal": "REACH",
