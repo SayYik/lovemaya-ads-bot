@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+BOT_VERSION = "v2.5"  # Change this to verify Railway deploys the latest file
 """
 Lovemaya Meta Ads Bot
 ======================
@@ -300,8 +301,13 @@ class MetaAdsExecutor:
 
     def _post(self, endpoint, data):
         data["access_token"] = self.token
+        # Force lowest cost bid strategy (no bid cap needed) and remove bid_amount/bid_cap
+        if "campaigns" in endpoint or "adsets" in endpoint:
+            data["bid_strategy"] = "LOWEST_COST_WITHOUT_CAP"
+            data.pop("bid_amount", None)
+            data.pop("bid_cap", None)
         # Convert Python booleans to lowercase strings for form encoding
-        for key, value in data.items():
+        for key, value in list(data.items()):
             if isinstance(value, bool):
                 data[key] = "true" if value else "false"
         logger.info(f"POST {endpoint} | data keys: {list(data.keys())}")
@@ -826,7 +832,7 @@ async def handle_approval(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             errors_text = "\n".join(result.get("errors", ["Unknown error"]))
             msg = (
-                f"❌ Campaign creation failed:\n\n"
+                f"❌ Campaign creation failed ({BOT_VERSION}):\n\n"
                 f"{errors_text}\n\n"
                 f"💡 Common fixes:\n"
                 f"• 'Invalid parameter' → Check META_PAGE_ID is correct\n"
