@@ -345,9 +345,10 @@ class MetaAdsExecutor:
                 "optimization_goal": adset.get("optimization_goal", "LINK_CLICKS").upper(),
                 "targeting": json.dumps(targeting),
                 "status": "PAUSED",
+                "is_adset_budget_sharing_enabled": "false",
             }
 
-            # Add promoted_object for traffic campaigns
+            # Add destination_type for traffic campaigns
             objective = campaign.get("objective", "OUTCOME_TRAFFIC").upper()
             if objective in ("OUTCOME_TRAFFIC",):
                 adset_data["destination_type"] = "WEBSITE"
