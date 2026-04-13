@@ -73,7 +73,6 @@ BRAND INFO:
 - Industry: Beauty & personal care / body care
 - Default currency: MYR (Malaysian Ringgit)
 - Default country: Malaysia
-- Languages: Bahasa Malaysia and English
 - Tone: Elegant, fresh & natural, affordable luxury
 - Ad Account: act_752480016788280
 
@@ -85,6 +84,33 @@ Choose the best objective based on the brief's goal. If the user mentions a goal
 - "leads" / "sign up" / "form" → OUTCOME_LEADS (optimize: LEAD_GENERATION)
 - "engagement" / "likes" / "comments" → OUTCOME_ENGAGEMENT (optimize: POST_ENGAGEMENT)
 If the user doesn't specify a goal, choose the best objective based on the product and context.
+
+LANGUAGE STRATEGY — DYNAMIC, USER-CONTROLLED:
+The user specifies which languages they want in their brief. Generate ONE ad variant per language requested.
+
+How to detect languages from the brief:
+- "english" / "EN" → English
+- "malay" / "bahasa" / "BM" / "bahasa malaysia" → Bahasa Malaysia
+- "chinese" / "CN" / "mandarin" / "中文" → Chinese (Simplified / 简体中文)
+- "tamil" / "TM" → Tamil
+- "arabic" / "AR" → Arabic
+- "korean" / "KR" / "한국어" → Korean
+- "japanese" / "JP" / "日本語" → Japanese
+- "thai" / "TH" → Thai
+- "indonesian" / "indo" / "BI" → Bahasa Indonesia
+- "hindi" / "HI" → Hindi
+- Any other language the user mentions → use that language
+
+If the user does NOT mention any languages, default to 3 variants: English, Bahasa Malaysia, Chinese (Simplified).
+
+TONE GUIDE per language:
+- English → clean, modern, aspirational
+- Bahasa Malaysia → warm, relatable, casual (not formal)
+- Chinese (简体中文) → elegant, concise, beauty-focused
+- Tamil → respectful, family-oriented, warm
+- For other languages → match the Lovemaya brand tone (elegant, natural, affordable luxury)
+
+Each variant should convey the SAME core message/offer but LOCALIZED naturally (not a direct translation — adapt the feel for that audience and culture).
 
 RESPOND WITH VALID JSON ONLY (no markdown, no ```). Use this exact structure:
 
@@ -100,17 +126,18 @@ RESPOND WITH VALID JSON ONLY (no markdown, no ```). Use this exact structure:
     "age_max": 45,
     "gender": "women",
     "optimization_goal": "LINK_CLICKS",
-    "locations": ["Kuala Lumpur, Malaysia"],
+    "locations": ["Malaysia"],
     "interests": ["Beauty", "Fragrance"]
   },
   "ad_variants": [
     {
-      "name": "Variant_A_[Angle]",
-      "primary_text": "under 125 chars",
-      "headline": "under 40 chars",
-      "description": "under 30 chars",
+      "name": "Variant_A_[LANG_CODE]",
+      "language": "[Language Name]",
+      "primary_text": "under 125 chars — in that language",
+      "headline": "under 40 chars — in that language",
+      "description": "under 30 chars — in that language",
       "cta": "SHOP_NOW",
-      "angle": "benefit-led"
+      "angle": "[angle]"
     }
   ],
   "image_prompt": "A detailed Ideogram.ai prompt for the ad image...",
@@ -120,9 +147,13 @@ RESPOND WITH VALID JSON ONLY (no markdown, no ```). Use this exact structure:
 }
 
 RULES:
-- Always generate exactly 3 ad variants with different angles
+- Generate ONE variant per language the user requests (could be 1, 2, 3, 4, or more)
+- If no languages specified, default to 3: English, Bahasa Malaysia, Chinese (Simplified)
+- Each variant is LOCALIZED (not a direct translation) — adapt the feel for that audience
+- Use different angles for each variant (benefit-led, emotional, urgency, social-proof, etc.)
 - Primary text under 125 chars, headline under 40, description under 30
 - CTA must be: SHOP_NOW, LEARN_MORE, SIGN_UP, BOOK_NOW, or GET_OFFER
+- ALWAYS include the "language" field in each variant
 - Include detailed Manus instructions with exact button clicks and field values
 - Check against Meta Advertising Standards and flag any risks in policy_check
 - Match the budget, targeting, and objective from the user's brief
@@ -130,7 +161,6 @@ RULES:
 - Budget is in MYR (Malaysian Ringgit). MYR 10/day = daily_budget: 1000 (Meta uses cents)
 - Default targeting: Malaysia. Use specific states/cities if the user mentions them
 - If the brief is missing info, use sensible Lovemaya defaults for Malaysian market
-- Ad copy should be in Bahasa Malaysia and/or English depending on the audience
 """
 
 
@@ -500,16 +530,21 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📝 How to write a good brief:\n\n"
         "Include any of these (I'll fill in defaults for the rest):\n"
         "• Product name\n"
-        "• Daily budget (e.g. 200k, 500rb)\n"
+        "• Daily budget (e.g. MYR10, MYR30)\n"
         "• Target audience (age, gender)\n"
-        "• Locations (cities)\n"
+        "• Locations (cities/country)\n"
         "• Goal (traffic, sales, awareness, leads)\n"
-        "• Promo/offer details\n"
-        "• Landing page URL (if not lovemaya.co)\n\n"
+        "• Languages (english, malay, chinese, tamil, etc.)\n"
+        "• Promo/offer details\n\n"
+        "🌐 LANGUAGES:\n"
+        "Just mention the languages you want!\n"
+        "• No language mentioned → defaults to EN, BM, CN\n"
+        "• \"in english and chinese\" → 2 variants\n"
+        "• \"EN BM CN Tamil\" → 4 variants\n\n"
         "Example briefs:\n"
-        "\"Bath gel lavender, MYR10/day, women 18-45, all Malaysia, traffic\"\n\n"
-        "\"New perfume launch, MYR30/day, women 20-35, KL Penang JB, awareness, promo free pouch first 100 orders\"\n\n"
-        "\"Body scrub bundle, MYR15/day, women 25-40, sales, highlight: save 30%\""
+        "\"Bath gel, MYR10/day, women 18-45, Malaysia, traffic, in english and malay\"\n\n"
+        "\"Perfume launch, MYR30/day, KL Penang, awareness, in EN BM CN Tamil\"\n\n"
+        "\"Body scrub, MYR15/day, sales, chinese only\""
     )
 
 
@@ -562,7 +597,9 @@ async def handle_brief(update: Update, context: ContextTypes.DEFAULT_TYPE):
         summary = campaign.get("summary", "Campaign generated successfully.")
         variants_preview = ""
         for v in campaign.get("ad_variants", []):
-            variants_preview += f"\n• [{v.get('angle', '')}] {v.get('primary_text', '')}"
+            lang = v.get("language", "")
+            lang_tag = f" ({lang})" if lang else ""
+            variants_preview += f"\n• [{v.get('angle', '')}{lang_tag}] {v.get('primary_text', '')}"
 
         preview_text = (
             f"✅ Campaign Ready!\n\n"
