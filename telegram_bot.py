@@ -88,16 +88,41 @@ DEFAULT_AD_ACCOUNT = "shopify_my"  # Used when no account is mentioned
 def detect_ad_account(text: str) -> dict:
     """Detect which ad account to use based on keywords in the brief."""
     text_lower = text.lower()
-    # Check each account's keywords (longest match first to avoid partial matches)
     for key, account in AD_ACCOUNTS.items():
         for keyword in sorted(account["keywords"], key=len, reverse=True):
             if keyword in text_lower:
                 logger.info(f"Ad account detected: {account['name']} (matched '{keyword}')")
                 return account
-    # Default
     default = AD_ACCOUNTS[DEFAULT_AD_ACCOUNT]
     logger.info(f"No ad account keyword found, using default: {default['name']}")
     return default
+
+
+# ─────────────────────────────────────────────
+# BUDGET TYPE — CBO vs ABO
+# ─────────────────────────────────────────────
+
+def detect_budget_type(text: str) -> str:
+    """
+    Detect budget type from the brief.
+    CBO = Campaign Budget Optimization (budget set at campaign level, shared across ad sets)
+    ABO = Ad Set Budget Optimization (budget set per ad set, default)
+    """
+    text_lower = text.lower()
+    cbo_keywords = ["cbo", "campaign budget", "campaign level budget", "shared budget"]
+    abo_keywords = ["abo", "adset budget", "ad set budget"]
+
+    for kw in cbo_keywords:
+        if kw in text_lower:
+            logger.info(f"Budget type detected: CBO (matched '{kw}')")
+            return "CBO"
+    for kw in abo_keywords:
+        if kw in text_lower:
+            logger.info(f"Budget type detected: ABO (matched '{kw}')")
+            return "ABO"
+
+    logger.info("No budget type keyword found, using default: ABO")
+    return "ABO"
 
 
 # Store pending campaigns waiting for approval
@@ -215,6 +240,7 @@ RULES:
 - Budget is in MYR (Malaysian Ringgit). MYR 10/day = daily_budget: 1000 (Meta uses cents)
 - Default targeting: Malaysia. Use specific states/cities if the user mentions them
 - If the brief is missing info, use sensible Lovemaya defaults for Malaysian market
+- BUDGET TYPE: If user says "CBO" or "campaign budget" → Campaign Budget Optimization. If "ABO" or "adset budget" → Ad Set Budget. Default is ABO.
 """
 
 
@@ -367,15 +393,28 @@ class MetaAdsExecutor:
             logger.info(f"Using Ad Account: {self.account_id}")
 
             # ── 1. CREATE CAMPAIGN ──
-            logger.info("Step 1: Creating campaign...")
-            camp_result = self._post(f"{self.account_id}/campaigns", {
+            budget_type = campaign.get("_budget_type", "ABO")
+            adset = campaign.get("adset", {})
+            daily_budget = adset.get("daily_budget", 200000)
+            daily_budget = str(int(float(str(daily_budget).replace(",", "").replace(".", ""))))
+
+            logger.info(f"Step 1: Creating campaign... (Budget type: {budget_type})")
+            campaign_data = {
                 "name": campaign["campaign_name"],
                 "objective": campaign.get("objective", "OUTCOME_TRAFFIC"),
                 "status": "PAUSED",
                 "special_ad_categories": json.dumps([]),
-            })
+            }
+
+            # CBO: budget at campaign level
+            if budget_type == "CBO":
+                campaign_data["daily_budget"] = daily_budget
+                logger.info(f"CBO mode: daily_budget {daily_budget} set on campaign")
+
+            camp_result = self._post(f"{self.account_id}/campaigns", campaign_data)
             campaign_id = camp_result["id"]
             results["campaign_id"] = campaign_id
+            results["budget_type"] = budget_type
             logger.info(f"Campaign created: {campaign_id}")
 
             # ── 2. BUILD TARGETING ──
@@ -430,21 +469,25 @@ class MetaAdsExecutor:
             logger.info(f"Targeting built: {json.dumps(targeting)[:200]}")
 
             # ── 3. CREATE AD SET ──
-            logger.info("Step 3: Creating ad set...")
-            daily_budget = adset.get("daily_budget", 200000)
-            # Ensure budget is an integer string
-            daily_budget = str(int(float(str(daily_budget).replace(",", "").replace(".", ""))))
+            logger.info(f"Step 3: Creating ad set... (Budget type: {budget_type})")
 
             adset_data = {
                 "name": adset.get("name", f"AdSet_{datetime.now().strftime('%Y%m%d')}"),
                 "campaign_id": campaign_id,
-                "daily_budget": daily_budget,
                 "billing_event": "IMPRESSIONS",
                 "optimization_goal": adset.get("optimization_goal", "LINK_CLICKS").upper(),
                 "targeting": json.dumps(targeting),
                 "status": "PAUSED",
-                "is_adset_budget_sharing_enabled": "false",
             }
+
+            if budget_type == "CBO":
+                # CBO: no budget on adset, no budget sharing field needed
+                logger.info("CBO mode: no budget on ad set (campaign controls budget)")
+            else:
+                # ABO: budget on adset level
+                adset_data["daily_budget"] = daily_budget
+                adset_data["is_adset_budget_sharing_enabled"] = "false"
+                logger.info(f"ABO mode: daily_budget {daily_budget} set on ad set")
 
             # Add destination_type for traffic campaigns
             objective = campaign.get("objective", "OUTCOME_TRAFFIC").upper()
@@ -575,6 +618,9 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• \"cpas sg\" → CPAS Singapore\n"
         f"• \"cpas my\" → CPAS Malaysia\n"
         f"• \"shopify\" → Shopify Malaysia (default)\n\n"
+        f"💰 Budget Types:\n"
+        f"• \"CBO\" → Campaign budget (shared)\n"
+        f"• \"ABO\" → Ad set budget (default)\n\n"
         f"Commands:\n"
         f"/start — This message\n"
         f"/status [campaign_id] — Check campaign status\n"
@@ -593,6 +639,8 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• Locations (cities/country)\n"
         "• Goal (traffic, sales, awareness, leads)\n"
         "• Languages (english, malay, chinese, tamil, etc.)\n"
+        "• Budget type (CBO or ABO)\n"
+        "• Ad account (cpas sg, cpas my, shopify)\n"
         "• Promo/offer details\n\n"
         "🌐 LANGUAGES:\n"
         "Just mention the languages you want!\n"
@@ -600,9 +648,9 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• \"in english and chinese\" → 2 variants\n"
         "• \"EN BM CN Tamil\" → 4 variants\n\n"
         "Example briefs:\n"
-        "\"Bath gel, MYR10/day, women 18-45, Malaysia, traffic, in english and malay\"\n\n"
-        "\"Perfume launch, MYR30/day, KL Penang, awareness, in EN BM CN Tamil\"\n\n"
-        "\"Body scrub, MYR15/day, sales, chinese only\""
+        "\"Bath gel, MYR10/day, women 18-45, Malaysia, traffic, shopify, ABO, in EN and BM\"\n\n"
+        "\"Perfume launch, MYR30/day, KL Penang, awareness, cpas my, CBO, in EN BM CN Tamil\"\n\n"
+        "\"Body scrub, SGD5/day, Singapore, sales, cpas sg, chinese only\""
     )
 
 
@@ -640,13 +688,16 @@ async def handle_brief(update: Update, context: ContextTypes.DEFAULT_TYPE):
     brief_text = update.message.text
     logger.info(f"Brief received from {user_id}: {brief_text[:100]}...")
 
-    # Step 1: Detect ad account from brief
+    # Step 1: Detect ad account and budget type from brief
     detected_account = detect_ad_account(brief_text)
+    budget_type = detect_budget_type(brief_text)
 
     # Step 2: Acknowledge
+    budget_label = "Campaign Budget (CBO)" if budget_type == "CBO" else "Ad Set Budget (ABO)"
     status_msg = await update.message.reply_text(
         f"🧠 Generating campaign with Claude AI...\n"
-        f"📂 Ad Account: {detected_account['name']}"
+        f"📂 Ad Account: {detected_account['name']}\n"
+        f"💰 Budget Type: {budget_label}"
     )
 
     try:
@@ -654,13 +705,15 @@ async def handle_brief(update: Update, context: ContextTypes.DEFAULT_TYPE):
         campaign = generate_campaign_with_claude(brief_text)
         logger.info(f"Campaign generated: {campaign.get('campaign_name')}")
 
-        # Attach the detected ad account info to the campaign
+        # Attach the detected ad account and budget type to the campaign
         account_key = campaign.get("ad_account", DEFAULT_AD_ACCOUNT)
         if account_key in AD_ACCOUNTS:
             campaign["_ad_account"] = AD_ACCOUNTS[account_key]
         else:
             campaign["_ad_account"] = detected_account
+        campaign["_budget_type"] = budget_type
         logger.info(f"Using ad account: {campaign['_ad_account']['name']} ({campaign['_ad_account']['id']})")
+        logger.info(f"Budget type: {budget_type}")
 
         # Store for approval
         pending_campaigns[user_id] = campaign
@@ -676,13 +729,14 @@ async def handle_brief(update: Update, context: ContextTypes.DEFAULT_TYPE):
         acct = campaign.get("_ad_account", detected_account)
         currency = acct.get("currency", "MYR")
         budget = campaign.get("adset", {}).get("daily_budget", "?")
+        budget_label = "Campaign Budget (CBO)" if budget_type == "CBO" else "Ad Set Budget (ABO)"
 
         preview_text = (
             f"✅ Campaign Ready!\n\n"
             f"📂 Ad Account: {acct['name']}\n"
             f"📋 {campaign.get('campaign_name', 'Campaign')}\n"
             f"🎯 {campaign.get('objective', 'TRAFFIC')}\n"
-            f"💰 {currency} {budget} (cents)/day\n"
+            f"💰 {currency} {budget} (cents)/day — {budget_label}\n"
             f"👥 {campaign.get('adset', {}).get('gender', 'All')}, "
             f"age {campaign.get('adset', {}).get('age_min', 18)}-{campaign.get('adset', {}).get('age_max', 65)}\n"
             f"📍 {', '.join(str(l) for l in campaign.get('adset', {}).get('locations', []))}\n\n"
