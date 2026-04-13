@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-BOT_VERSION = "v4.3"  # Change this to verify Railway deploys the latest file
+BOT_VERSION = "v4.4"  # Change this to verify Railway deploys the latest file
 """
 Lovemaya Meta Ads Bot
 ======================
@@ -1003,25 +1003,22 @@ class MetaAdsExecutor:
 
             OBJECTIVE_CONFIG = {
                 "OUTCOME_TRAFFIC": {
-                    "optimization_goal": "LANDING_PAGE_VIEWS",
+                    "optimization_goal": "LINK_CLICKS",
                     "destination_type": "WEBSITE",
-                    "promoted_object": {"page_id": self.page_id},
                 },
                 "OUTCOME_SALES": {
-                    "optimization_goal": "OFFSITE_CONVERSIONS",
+                    "optimization_goal": "LINK_CLICKS",
                     "destination_type": "WEBSITE",
-                    "promoted_object": {"page_id": self.page_id},
                 },
                 "OUTCOME_AWARENESS": {
                     "optimization_goal": "REACH",
-                    "promoted_object": {"page_id": self.page_id},
                 },
                 "OUTCOME_LEADS": {
-                    "optimization_goal": "LEAD_GENERATION",
+                    "optimization_goal": "QUALITY_LEAD",
                     "promoted_object": {"page_id": self.page_id},
                 },
                 "OUTCOME_ENGAGEMENT": {
-                    "optimization_goal": "POST_ENGAGEMENT",
+                    "optimization_goal": "LINK_CLICKS",
                     "promoted_object": {"page_id": self.page_id},
                 },
             }
