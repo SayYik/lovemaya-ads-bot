@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-BOT_VERSION = "v4.2"  # Change this to verify Railway deploys the latest file
+BOT_VERSION = "v4.3"  # Change this to verify Railway deploys the latest file
 """
 Lovemaya Meta Ads Bot
 ======================
@@ -998,44 +998,60 @@ class MetaAdsExecutor:
             # ── 3. CREATE AD SET ──
             logger.info(f"Step 3: Creating ad set... (Budget type: {budget_type})")
 
+            # Map objective to the correct optimization_goal, destination_type, and promoted_object
+            objective = campaign.get("objective", "OUTCOME_TRAFFIC").upper()
+
+            OBJECTIVE_CONFIG = {
+                "OUTCOME_TRAFFIC": {
+                    "optimization_goal": "LANDING_PAGE_VIEWS",
+                    "destination_type": "WEBSITE",
+                    "promoted_object": {"page_id": self.page_id},
+                },
+                "OUTCOME_SALES": {
+                    "optimization_goal": "OFFSITE_CONVERSIONS",
+                    "destination_type": "WEBSITE",
+                    "promoted_object": {"page_id": self.page_id},
+                },
+                "OUTCOME_AWARENESS": {
+                    "optimization_goal": "REACH",
+                    "promoted_object": {"page_id": self.page_id},
+                },
+                "OUTCOME_LEADS": {
+                    "optimization_goal": "LEAD_GENERATION",
+                    "promoted_object": {"page_id": self.page_id},
+                },
+                "OUTCOME_ENGAGEMENT": {
+                    "optimization_goal": "POST_ENGAGEMENT",
+                    "promoted_object": {"page_id": self.page_id},
+                },
+            }
+
+            config = OBJECTIVE_CONFIG.get(objective, OBJECTIVE_CONFIG["OUTCOME_TRAFFIC"])
+            opt_goal = config["optimization_goal"]
+            logger.info(f"Objective: {objective} → optimization_goal: {opt_goal}")
+
             adset_data = {
                 "name": adset.get("name", f"AdSet_{datetime.now().strftime('%Y%m%d')}"),
                 "campaign_id": campaign_id,
                 "billing_event": "IMPRESSIONS",
-                "optimization_goal": adset.get("optimization_goal", "LINK_CLICKS").upper(),
+                "optimization_goal": opt_goal,
                 "targeting": json.dumps(targeting),
                 "status": "PAUSED",
             }
+
+            if config.get("destination_type"):
+                adset_data["destination_type"] = config["destination_type"]
+            if config.get("promoted_object"):
+                adset_data["promoted_object"] = json.dumps(config["promoted_object"])
 
             # ALWAYS set this field — Meta requires it on every ad set
             adset_data["is_adset_budget_sharing_enabled"] = "false"
 
             if budget_type == "CBO":
-                # CBO: no budget on adset (campaign controls budget)
                 logger.info("CBO mode: no budget on ad set (campaign controls budget)")
             else:
-                # ABO: budget on adset level
                 adset_data["daily_budget"] = daily_budget
                 logger.info(f"ABO mode: daily_budget {daily_budget} set on ad set")
-
-            # Add destination_type and promoted_object based on objective
-            objective = campaign.get("objective", "OUTCOME_TRAFFIC").upper()
-
-            if objective == "OUTCOME_TRAFFIC":
-                adset_data["destination_type"] = "WEBSITE"
-                adset_data["promoted_object"] = json.dumps({"page_id": self.page_id})
-            elif objective == "OUTCOME_SALES":
-                adset_data["destination_type"] = "WEBSITE"
-                adset_data["promoted_object"] = json.dumps({"page_id": self.page_id})
-            elif objective == "OUTCOME_LEADS":
-                adset_data["promoted_object"] = json.dumps({"page_id": self.page_id})
-            elif objective == "OUTCOME_ENGAGEMENT":
-                adset_data["promoted_object"] = json.dumps({"page_id": self.page_id})
-            elif objective == "OUTCOME_AWARENESS":
-                # Awareness usually doesn't need promoted_object, but add page_id just in case
-                adset_data["promoted_object"] = json.dumps({"page_id": self.page_id})
-
-            logger.info(f"Objective: {objective}, promoted_object set with page_id: {self.page_id}")
 
             adset_result = self._post(f"{self.account_id}/adsets", adset_data)
             adset_id = adset_result["id"]
