@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-BOT_VERSION = "v4.6"  # Change this to verify Railway deploys the latest file
+BOT_VERSION = "v4.7"  # Change this to verify Railway deploys the latest file
 """
 Lovemaya Meta Ads Bot
 ======================
@@ -740,7 +740,7 @@ class MetaAdsExecutor:
         self.account_id = ad_account_id or AD_ACCOUNTS[DEFAULT_AD_ACCOUNT]["id"]
         self.page_id = META_PAGE_ID
         self.ig_actor_id = META_IG_ACTOR_ID
-        self.base_url = "https://graph.facebook.com/v21.0"
+        self.base_url = "https://graph.facebook.com/v25.0"
 
     def _post(self, endpoint, data):
         data["access_token"] = self.token
@@ -749,10 +749,10 @@ class MetaAdsExecutor:
             data["bid_strategy"] = "LOWEST_COST_WITHOUT_CAP"
             data.pop("bid_amount", None)
             data.pop("bid_cap", None)
-        # Convert Python booleans to lowercase strings for form encoding
+        # Convert Python booleans to Meta-style strings (capital True/False)
         for key, value in list(data.items()):
             if isinstance(value, bool):
-                data[key] = "true" if value else "false"
+                data[key] = "True" if value else "False"
         logger.info(f"POST {endpoint} | data keys: {list(data.keys())}")
         logger.info(f"POST {endpoint} | data values: { {k: v for k, v in data.items() if k != 'access_token'} }")
         resp = requests.post(f"{self.base_url}/{endpoint}", data=data, timeout=30)
@@ -883,6 +883,8 @@ class MetaAdsExecutor:
                 objective = "OUTCOME_TRAFFIC"
                 results["warnings"].append("No Facebook Pixel → changed Sales to Traffic. Add META_PIXEL_ID in Railway for Sales.")
 
+            # Store resolved objective for debug (may differ from Claude's original)
+            results["debug_resolved_objective"] = objective
             logger.info(f"Step 1: Creating campaign... (Budget type: {budget_type}, Objective: {objective})")
             campaign_data = {
                 "name": campaign["campaign_name"],
@@ -894,11 +896,11 @@ class MetaAdsExecutor:
             if budget_type == "CBO":
                 # CBO: budget at campaign level, Meta distributes across ad sets
                 campaign_data["daily_budget"] = daily_budget
-                campaign_data["is_campaign_budget_optimization_on"] = "true"
+                campaign_data["is_campaign_budget_optimization_on"] = "True"
                 logger.info(f"CBO mode: daily_budget {daily_budget} set on campaign")
             else:
                 # ABO: explicitly tell campaign that CBO is OFF
-                campaign_data["is_campaign_budget_optimization_on"] = "false"
+                campaign_data["is_campaign_budget_optimization_on"] = "False"
                 logger.info("ABO mode: CBO disabled on campaign, budget will be on ad set")
 
             camp_result = self._post(f"{self.account_id}/campaigns", campaign_data)
@@ -1036,6 +1038,10 @@ class MetaAdsExecutor:
             opt_goal = config["optimization_goal"]
             logger.info(f"Objective: {objective} → optimization_goal: {opt_goal}")
 
+            # Store debug info EARLY for error reporting (before any API call can fail)
+            results["debug_optimization_goal"] = opt_goal
+            results["debug_destination_type"] = config.get("destination_type", "none")
+
             adset_data = {
                 "name": adset.get("name", f"AdSet_{datetime.now().strftime('%Y%m%d')}"),
                 "campaign_id": campaign_id,
@@ -1043,19 +1049,14 @@ class MetaAdsExecutor:
                 "optimization_goal": opt_goal,
                 "targeting": json.dumps(targeting),
                 "status": "PAUSED",
+                # Meta requires "True" or "False" (capital) for this field (v24.0+)
+                "is_adset_budget_sharing_enabled": "False",
             }
 
             if config.get("destination_type"):
                 adset_data["destination_type"] = config["destination_type"]
             if config.get("promoted_object"):
                 adset_data["promoted_object"] = json.dumps(config["promoted_object"])
-
-            # Store debug info for error reporting
-            results["debug_optimization_goal"] = opt_goal
-            results["debug_destination_type"] = config.get("destination_type", "none")
-
-            # ALWAYS set this field — Meta requires it on every ad set
-            adset_data["is_adset_budget_sharing_enabled"] = "false"
 
             if budget_type == "CBO":
                 logger.info("CBO mode: no budget on ad set (campaign controls budget)")
@@ -1820,13 +1821,14 @@ async def handle_approval(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             errors_text = "\n".join(result.get("errors", ["Unknown error"]))
             # Include debug info so we can see what was sent
-            debug_obj = campaign.get("objective", "?")
+            debug_obj = result.get("debug_resolved_objective", campaign.get("objective", "?"))
             debug_opt = result.get("debug_optimization_goal", "?")
             debug_dest = result.get("debug_destination_type", "?")
+            debug_pixel = "yes" if META_PIXEL_ID else "no"
             msg = (
                 f"❌ Campaign creation failed ({BOT_VERSION}):\n\n"
                 f"{errors_text}\n\n"
-                f"🔍 Debug: obj={debug_obj} opt={debug_opt} dest={debug_dest}\n\n"
+                f"🔍 Debug: obj={debug_obj} opt={debug_opt} dest={debug_dest} pixel={debug_pixel}\n\n"
                 f"💡 Common fixes:\n"
                 f"• 'Invalid parameter' → Check META_PAGE_ID is correct\n"
                 f"• 'Invalid token' → Refresh META_ACCESS_TOKEN\n"
