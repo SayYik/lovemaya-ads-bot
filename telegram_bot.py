@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-BOT_VERSION = "v2.8"  # Change this to verify Railway deploys the latest file
+BOT_VERSION = "v3.0"  # Change this to verify Railway deploys the latest file
 """
 Lovemaya Meta Ads Bot
 ======================
@@ -161,6 +161,51 @@ def detect_audience_type(text: str) -> str:
 pending_campaigns = {}
 
 # ─────────────────────────────────────────────
+# LEARNING MEMORY — Bot remembers your preferences
+# ─────────────────────────────────────────────
+MEMORY_FILE = os.path.join(os.path.dirname(__file__), "bot_memory.json")
+
+def load_memory() -> list:
+    """Load saved feedback/preferences."""
+    try:
+        if os.path.exists(MEMORY_FILE):
+            with open(MEMORY_FILE, "r") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return []
+
+def save_memory(memories: list):
+    """Save feedback/preferences to file."""
+    try:
+        with open(MEMORY_FILE, "w") as f:
+            json.dump(memories, f, indent=2)
+    except Exception as e:
+        logger.error(f"Failed to save memory: {e}")
+
+def add_memory(feedback: str):
+    """Add a new feedback entry."""
+    memories = load_memory()
+    memories.append({
+        "feedback": feedback,
+        "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+    })
+    # Keep only last 50 memories
+    if len(memories) > 50:
+        memories = memories[-50:]
+    save_memory(memories)
+
+def get_memory_prompt() -> str:
+    """Build a memory context string for Claude."""
+    memories = load_memory()
+    if not memories:
+        return ""
+    memory_lines = []
+    for m in memories[-20:]:  # Use last 20 most recent
+        memory_lines.append(f"- {m['feedback']} ({m['date']})")
+    return "\n\nUSER PREFERENCES & PAST FEEDBACK (learn from these):\n" + "\n".join(memory_lines)
+
+# ─────────────────────────────────────────────
 # LOVEMAYA BRAND CONTEXT (sent to Claude)
 # ─────────────────────────────────────────────
 
@@ -222,10 +267,17 @@ TONE GUIDE per language:
 
 Each variant should convey the SAME core message/offer but LOCALIZED naturally (not a direct translation — adapt the feel for that audience and culture).
 
+IMPORTANT DATE: Today's date will be provided at the end of the brief. ALWAYS use that date for the campaign name MonthYear — NEVER use old dates like 2024.
+
+INTEREST TARGETING — USER-CONTROLLED:
+- If the user specifies interests in the brief (e.g. "interest: skincare, K-beauty, perfume") → use ONLY those exact interests
+- If the user does NOT specify interests → choose 3-5 relevant interests for the product
+- Always include the interests in the JSON so the user can review them before approving
+
 RESPOND WITH VALID JSON ONLY (no markdown, no ```). Use this exact structure:
 
 {
-  "campaign_name": "Lovemaya_[Product]_[Objective]_[MonthYear]",
+  "campaign_name": "Lovemaya_[Product]_[Objective]_[MonthYear e.g. Apr2026]",
   "ad_account": "shopify_my",
   "objective": "OUTCOME_TRAFFIC",
   "currency": "MYR",
@@ -238,7 +290,8 @@ RESPOND WITH VALID JSON ONLY (no markdown, no ```). Use this exact structure:
     "gender": "women",
     "optimization_goal": "LINK_CLICKS",
     "locations": ["Malaysia"],
-    "interests": ["Beauty", "Fragrance"]
+    "interests": ["Beauty", "Fragrance"],
+    "languages": ["en", "zh_CN"]
   },
   "ad_variants": [
     {
@@ -258,6 +311,7 @@ RESPOND WITH VALID JSON ONLY (no markdown, no ```). Use this exact structure:
 }
 
 RULES:
+- ONLY create ONE campaign, ONE ad set, and one ad per language. Never duplicate.
 - Generate ONE variant per language the user requests (could be 1, 2, 3, 4, or more)
 - If no languages specified, default to 3: English, Bahasa Malaysia, Chinese (Simplified)
 - Each variant is LOCALIZED (not a direct translation) — adapt the feel for that audience
@@ -274,6 +328,8 @@ RULES:
 - If the brief is missing info, use sensible Lovemaya defaults for Malaysian market
 - BUDGET TYPE: If user says "CBO" or "campaign budget" → Campaign Budget Optimization. If "ABO" or "adset budget" → Ad Set Budget. Default is ABO.
 - AUDIENCE TYPE: If user says "adv+" or "advantage+" → Advantage+ Audience (Meta AI expands targeting). If "manual targeting" or "adv-" → Manual Targeting (exact targeting). Default is Manual.
+- INTERESTS: If user specifies interests (e.g. "interest: skincare, perfume") → use ONLY those. If not specified → pick 3-5 relevant ones for the product.
+- LANGUAGES field in adset: Include Meta locale codes for the languages in your ad variants. Map: English→"en", Malay→"ms", Chinese→"zh_CN", Tamil→"ta", Arabic→"ar", Korean→"ko", Japanese→"ja", Thai→"th", Indonesian→"id", Hindi→"hi"
 """
 
 
@@ -296,12 +352,15 @@ def generate_campaign_with_claude(brief_text: str) -> dict:
     """Send brief to Claude API and get structured campaign JSON."""
     client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
 
+    # Add learned preferences to the system prompt
+    full_system = BRAND_SYSTEM_PROMPT + get_memory_prompt()
+
     message = client.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=4096,
-        system=BRAND_SYSTEM_PROMPT,
+        system=full_system,
         messages=[
-            {"role": "user", "content": f"Create a Meta ad campaign for this brief:\n\n{brief_text}"}
+            {"role": "user", "content": f"Create a Meta ad campaign for this brief:\n\n{brief_text}\n\n[Today's date: {datetime.now().strftime('%B %Y')}]"}
         ]
     )
 
@@ -514,6 +573,42 @@ class MetaAdsExecutor:
             else:
                 results["warnings"].append("No interests could be resolved, using broad targeting")
 
+            # Set language/locale targeting based on ad variant languages
+            LOCALE_MAP = {
+                "en": 6, "english": 6,
+                "ms": 41, "malay": 41, "bahasa malaysia": 41, "bm": 41,
+                "zh_cn": 44, "chinese": 44, "cn": 44, "mandarin": 44,
+                "zh_tw": 45, "traditional chinese": 45,
+                "ta": 56, "tamil": 56,
+                "ar": 28, "arabic": 28,
+                "ko": 25, "korean": 25,
+                "ja": 9, "japanese": 9,
+                "th": 57, "thai": 57,
+                "id": 23, "indonesian": 23,
+                "hi": 17, "hindi": 17,
+            }
+            # Get locales from adset.languages (set by Claude) or from ad_variants
+            locale_ids = []
+            adset_languages = adset.get("languages", [])
+            if adset_languages:
+                for lang_code in adset_languages:
+                    lid = LOCALE_MAP.get(lang_code.lower().replace("-", "_"))
+                    if lid and lid not in locale_ids:
+                        locale_ids.append(lid)
+            else:
+                # Fallback: extract from ad variants
+                for v in campaign.get("ad_variants", []):
+                    lang_name = v.get("language", "").lower()
+                    for key, lid in LOCALE_MAP.items():
+                        if key in lang_name and lid not in locale_ids:
+                            locale_ids.append(lid)
+
+            if locale_ids:
+                targeting["locales"] = locale_ids
+                logger.info(f"Locale targeting set: {locale_ids}")
+            else:
+                logger.info("No locale targeting — all languages")
+
             # Set Advantage+ audience based on user's choice
             audience_type = campaign.get("_audience_type", "MANUAL")
             if audience_type == "ADV+":
@@ -714,17 +809,23 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• Goal (traffic, sales, awareness, leads)\n"
         "• Languages (english, malay, chinese, tamil, etc.)\n"
         "• Budget type (CBO or ABO)\n"
+        "• Audience type (adv+ or manual targeting)\n"
         "• Ad account (cpas sg, cpas my, shopify)\n"
+        "• Interests (e.g. interest: skincare, perfume, K-beauty)\n"
         "• Promo/offer details\n\n"
         "🌐 LANGUAGES:\n"
         "Just mention the languages you want!\n"
         "• No language mentioned → defaults to EN, BM, CN\n"
         "• \"in english and chinese\" → 2 variants\n"
         "• \"EN BM CN Tamil\" → 4 variants\n\n"
+        "🧠 LEARNING COMMANDS:\n"
+        "/feedback [text] — Teach me your preferences\n"
+        "/memory — See what I've learned\n"
+        "/forget — Clear all memories\n\n"
         "Example briefs:\n"
-        "\"Bath gel, MYR10/day, women 18-45, Malaysia, traffic, shopify, ABO, in EN and BM\"\n\n"
-        "\"Perfume launch, MYR30/day, KL Penang, awareness, cpas my, CBO, in EN BM CN Tamil\"\n\n"
-        "\"Body scrub, SGD5/day, Singapore, sales, cpas sg, chinese only\""
+        "\"Bath gel, MYR10/day, women 18-45, Malaysia, traffic, shopify, ABO, in EN and BM, interest: skincare, body care\"\n\n"
+        "\"Perfume launch, MYR30/day, KL Penang, awareness, cpas my, CBO, adv+, in EN BM CN Tamil\"\n\n"
+        "\"Body scrub, SGD5/day, Singapore, sales, cpas sg, chinese only, interest: beauty, fragrance\""
     )
 
 
@@ -749,6 +850,70 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     except Exception as e:
         await update.message.reply_text(f"Error: {e}")
+
+
+async def cmd_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Save user feedback so the bot learns and improves."""
+    if not is_authorized(update.effective_user.id):
+        await update.message.reply_text("Sorry, you're not authorized.")
+        return
+
+    feedback_text = " ".join(context.args) if context.args else ""
+    if not feedback_text:
+        await update.message.reply_text(
+            "💡 Tell me what to improve! Examples:\n\n"
+            "/feedback always use emotional angles for body mist\n"
+            "/feedback don't use 'limited time' in headlines\n"
+            "/feedback I prefer shorter primary text\n"
+            "/feedback use more Malay slang in BM variants\n"
+            "/feedback default interest should be skincare and fragrance"
+        )
+        return
+
+    add_memory(feedback_text)
+    memories = load_memory()
+    await update.message.reply_text(
+        f"✅ Got it! I'll remember that.\n\n"
+        f"📝 \"{feedback_text}\"\n\n"
+        f"🧠 Total memories: {len(memories)}\n"
+        f"This will be applied to all future campaigns."
+    )
+
+
+async def cmd_memory(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show what the bot has learned."""
+    if not is_authorized(update.effective_user.id):
+        await update.message.reply_text("Sorry, you're not authorized.")
+        return
+
+    memories = load_memory()
+    if not memories:
+        await update.message.reply_text(
+            "🧠 No memories yet!\n\n"
+            "Use /feedback to teach me your preferences.\n"
+            "Example: /feedback always use benefit-led angles for skincare"
+        )
+        return
+
+    lines = []
+    for i, m in enumerate(memories, 1):
+        lines.append(f"{i}. {m['feedback']} ({m['date']})")
+
+    await update.message.reply_text(
+        f"🧠 My memories ({len(memories)} total):\n\n" +
+        "\n".join(lines) +
+        "\n\nUse /forget to clear all memories."
+    )
+
+
+async def cmd_forget(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Clear all learned memories."""
+    if not is_authorized(update.effective_user.id):
+        await update.message.reply_text("Sorry, you're not authorized.")
+        return
+
+    save_memory([])
+    await update.message.reply_text("🗑 All memories cleared. Starting fresh!")
 
 
 async def handle_brief(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -981,6 +1146,9 @@ def main():
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("status", cmd_status))
+    app.add_handler(CommandHandler("feedback", cmd_feedback))
+    app.add_handler(CommandHandler("memory", cmd_memory))
+    app.add_handler(CommandHandler("forget", cmd_forget))
     app.add_handler(CallbackQueryHandler(handle_approval))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_brief))
 
