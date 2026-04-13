@@ -71,26 +71,36 @@ BRAND INFO:
 - Website: https://lovemaya.co
 - Instagram: @lovemaya.my
 - Industry: Beauty & personal care / body care
-- Currency: IDR
-- Languages: Bahasa Indonesia and English
+- Default currency: MYR (Malaysian Ringgit)
+- Default country: Malaysia
+- Languages: Bahasa Malaysia and English
 - Tone: Elegant, fresh & natural, affordable luxury
 - Ad Account: act_752480016788280
+
+OBJECTIVE SELECTION GUIDE:
+Choose the best objective based on the brief's goal. If the user mentions a goal, map it like this:
+- "traffic" / "website visits" / "clicks" → OUTCOME_TRAFFIC (optimize: LINK_CLICKS)
+- "sales" / "conversions" / "purchase" → OUTCOME_SALES (optimize: OFFSITE_CONVERSIONS)
+- "awareness" / "reach" / "branding" → OUTCOME_AWARENESS (optimize: REACH)
+- "leads" / "sign up" / "form" → OUTCOME_LEADS (optimize: LEAD_GENERATION)
+- "engagement" / "likes" / "comments" → OUTCOME_ENGAGEMENT (optimize: POST_ENGAGEMENT)
+If the user doesn't specify a goal, choose the best objective based on the product and context.
 
 RESPOND WITH VALID JSON ONLY (no markdown, no ```). Use this exact structure:
 
 {
   "campaign_name": "Lovemaya_[Product]_[Objective]_[MonthYear]",
   "objective": "OUTCOME_TRAFFIC",
-  "currency": "IDR",
+  "currency": "MYR",
   "website_url": "https://lovemaya.co",
   "adset": {
     "name": "[descriptive ad set name]",
-    "daily_budget": 200000,
-    "age_min": 20,
-    "age_max": 35,
+    "daily_budget": 1000,
+    "age_min": 18,
+    "age_max": 45,
     "gender": "women",
     "optimization_goal": "LINK_CLICKS",
-    "locations": ["Jakarta, Indonesia"],
+    "locations": ["Kuala Lumpur, Malaysia"],
     "interests": ["Beauty", "Fragrance"]
   },
   "ad_variants": [
@@ -116,7 +126,11 @@ RULES:
 - Include detailed Manus instructions with exact button clicks and field values
 - Check against Meta Advertising Standards and flag any risks in policy_check
 - Match the budget, targeting, and objective from the user's brief
-- If the brief is missing info, use sensible Lovemaya defaults
+- Choose the RIGHT objective based on the goal (see OBJECTIVE SELECTION GUIDE above)
+- Budget is in MYR (Malaysian Ringgit). MYR 10/day = daily_budget: 1000 (Meta uses cents)
+- Default targeting: Malaysia. Use specific states/cities if the user mentions them
+- If the brief is missing info, use sensible Lovemaya defaults for Malaysian market
+- Ad copy should be in Bahasa Malaysia and/or English depending on the audience
 """
 
 
@@ -309,10 +323,10 @@ class MetaAdsExecutor:
             if cities:
                 targeting["geo_locations"] = {"cities": cities}
             else:
-                # Fallback to Indonesia if no cities found
-                logger.warning("No cities found, falling back to Indonesia country targeting")
-                targeting["geo_locations"] = {"countries": ["ID"]}
-                results["warnings"].append("Cities not found, used Indonesia-wide targeting instead")
+                # Fallback to Malaysia if no cities found
+                logger.warning("No cities found, falling back to Malaysia country targeting")
+                targeting["geo_locations"] = {"countries": ["MY"]}
+                results["warnings"].append("Cities not found, used Malaysia-wide targeting instead")
 
             # Resolve interests (optional - campaign works without them)
             interests = []
@@ -472,7 +486,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Hey {user.first_name}! 👋\n\n"
         f"I'm the Lovemaya Ads Engine. Send me a brief and I'll create a full Meta campaign.\n\n"
         f"Example:\n"
-        f"\"Jasmine body mist, 200k/day, women 20-35, Jakarta & Bandung, goal: traffic\"\n\n"
+        f"\"Bath gel lavender, MYR10/day, women 18-45, all Malaysia, goal: traffic\"\n\n"
         f"Commands:\n"
         f"/start — This message\n"
         f"/status [campaign_id] — Check campaign status\n"
@@ -493,8 +507,9 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• Promo/offer details\n"
         "• Landing page URL (if not lovemaya.co)\n\n"
         "Example briefs:\n"
-        "\"Rose body lotion, 300k/day, women 18-30, all Indonesia, sales\"\n\n"
-        "\"New perfume launch, 500k/day, premium audience Jakarta Surabaya Bali, awareness, include promo free pouch for first 100 orders\""
+        "\"Bath gel lavender, MYR10/day, women 18-45, all Malaysia, traffic\"\n\n"
+        "\"New perfume launch, MYR30/day, women 20-35, KL Penang JB, awareness, promo free pouch first 100 orders\"\n\n"
+        "\"Body scrub bundle, MYR15/day, women 25-40, sales, highlight: save 30%\""
     )
 
 
