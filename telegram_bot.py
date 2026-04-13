@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-BOT_VERSION = "v2.7"  # Change this to verify Railway deploys the latest file
+BOT_VERSION = "v2.8"  # Change this to verify Railway deploys the latest file
 """
 Lovemaya Meta Ads Bot
 ======================
@@ -585,18 +585,33 @@ class MetaAdsExecutor:
                         "link_data": link_data,
                     }
 
-                    # Add Instagram actor if available
+                    # Try with Instagram first, retry without if it fails
+                    creative_id = None
                     if self.ig_actor_id:
-                        object_story_spec["instagram_actor_id"] = self.ig_actor_id
+                        try:
+                            object_story_spec["instagram_actor_id"] = self.ig_actor_id
+                            creative_data = {
+                                "name": variant_name,
+                                "object_story_spec": json.dumps(object_story_spec),
+                            }
+                            logger.info(f"Creating creative with IG: {variant_name}")
+                            creative_result = self._post(f"{self.account_id}/adcreatives", creative_data)
+                            creative_id = creative_result["id"]
+                        except Exception as ig_err:
+                            logger.warning(f"IG actor failed ({ig_err}), retrying without Instagram...")
+                            object_story_spec.pop("instagram_actor_id", None)
+                            self.ig_actor_id = ""  # Don't try IG for remaining variants
 
-                    creative_data = {
-                        "name": variant_name,
-                        "object_story_spec": json.dumps(object_story_spec),
-                    }
+                    if not creative_id:
+                        # Create without Instagram (Facebook only)
+                        creative_data = {
+                            "name": variant_name,
+                            "object_story_spec": json.dumps(object_story_spec),
+                        }
+                        logger.info(f"Creating creative (FB only): {variant_name}")
+                        creative_result = self._post(f"{self.account_id}/adcreatives", creative_data)
+                        creative_id = creative_result["id"]
 
-                    logger.info(f"Creating creative: {variant_name}")
-                    creative_result = self._post(f"{self.account_id}/adcreatives", creative_data)
-                    creative_id = creative_result["id"]
                     results["creative_ids"].append(creative_id)
 
                     logger.info(f"Creating ad for creative {creative_id}")
