@@ -51,11 +51,54 @@ logger = logging.getLogger(__name__)
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", "")
 META_ACCESS_TOKEN = os.getenv("META_ACCESS_TOKEN", "")
-META_AD_ACCOUNT_ID = os.getenv("META_AD_ACCOUNT_ID", "act_752480016788280")
 META_PAGE_ID = os.getenv("META_PAGE_ID", "")
 META_IG_ACTOR_ID = os.getenv("META_IG_ACTOR_ID", "")
 MANUS_API_KEY = os.getenv("MANUS_API_KEY", "")
 ALLOWED_USER_IDS = [int(x.strip()) for x in os.getenv("ALLOWED_USER_IDS", "").split(",") if x.strip()]
+
+# ─────────────────────────────────────────────
+# AD ACCOUNTS — add/edit your accounts here
+# ─────────────────────────────────────────────
+AD_ACCOUNTS = {
+    "cpas_sg": {
+        "id": "act_2989596441217531",
+        "name": "CPAS SG",
+        "keywords": ["cpas sg", "singapore", "sg", "cpas singapore"],
+        "country": "SG",
+        "currency": "SGD",
+    },
+    "cpas_my": {
+        "id": "act_649067021263977",
+        "name": "CPAS MY",
+        "keywords": ["cpas my", "cpas malaysia", "cpas"],
+        "country": "MY",
+        "currency": "MYR",
+    },
+    "shopify_my": {
+        "id": "act_752480016788280",
+        "name": "Shopify MY",
+        "keywords": ["shopify", "shopify my", "shopify malaysia", "website", "web"],
+        "country": "MY",
+        "currency": "MYR",
+    },
+}
+DEFAULT_AD_ACCOUNT = "shopify_my"  # Used when no account is mentioned
+
+
+def detect_ad_account(text: str) -> dict:
+    """Detect which ad account to use based on keywords in the brief."""
+    text_lower = text.lower()
+    # Check each account's keywords (longest match first to avoid partial matches)
+    for key, account in AD_ACCOUNTS.items():
+        for keyword in sorted(account["keywords"], key=len, reverse=True):
+            if keyword in text_lower:
+                logger.info(f"Ad account detected: {account['name']} (matched '{keyword}')")
+                return account
+    # Default
+    default = AD_ACCOUNTS[DEFAULT_AD_ACCOUNT]
+    logger.info(f"No ad account keyword found, using default: {default['name']}")
+    return default
+
 
 # Store pending campaigns waiting for approval
 pending_campaigns = {}
@@ -74,6 +117,16 @@ BRAND INFO:
 - Default currency: MYR (Malaysian Ringgit)
 - Default country: Malaysia
 - Tone: Elegant, fresh & natural, affordable luxury
+
+AD ACCOUNTS (user picks one in their brief):
+- "CPAS SG" (act_2989596441217531) — for Singapore CPAS campaigns, currency: SGD
+- "CPAS MY" (act_649067021263977) — for Malaysia CPAS campaigns, currency: MYR
+- "Shopify MY" (act_752480016788280) — for Shopify Malaysia website campaigns, currency: MYR
+If the user mentions "cpas sg" or "singapore" → use CPAS SG account.
+If the user mentions "cpas my" or "cpas" → use CPAS MY account.
+If the user mentions "shopify" or "website" → use Shopify MY account.
+If not mentioned, default to Shopify MY.
+Include the ad_account field in your JSON response with the account key: "cpas_sg", "cpas_my", or "shopify_my".
 - Ad Account: act_752480016788280
 
 OBJECTIVE SELECTION GUIDE:
@@ -116,6 +169,7 @@ RESPOND WITH VALID JSON ONLY (no markdown, no ```). Use this exact structure:
 
 {
   "campaign_name": "Lovemaya_[Product]_[Objective]_[MonthYear]",
+  "ad_account": "shopify_my",
   "objective": "OUTCOME_TRAFFIC",
   "currency": "MYR",
   "website_url": "https://lovemaya.co",
@@ -211,9 +265,9 @@ def generate_campaign_with_claude(brief_text: str) -> dict:
 class MetaAdsExecutor:
     """Creates campaigns via Meta Marketing API."""
 
-    def __init__(self):
+    def __init__(self, ad_account_id=None):
         self.token = META_ACCESS_TOKEN
-        self.account_id = META_AD_ACCOUNT_ID
+        self.account_id = ad_account_id or AD_ACCOUNTS[DEFAULT_AD_ACCOUNT]["id"]
         self.page_id = META_PAGE_ID
         self.ig_actor_id = META_IG_ACTOR_ID
         self.base_url = "https://graph.facebook.com/v21.0"
@@ -516,7 +570,11 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Hey {user.first_name}! 👋\n\n"
         f"I'm the Lovemaya Ads Engine. Send me a brief and I'll create a full Meta campaign.\n\n"
         f"Example:\n"
-        f"\"Bath gel lavender, MYR10/day, women 18-45, all Malaysia, goal: traffic\"\n\n"
+        f"\"Bath gel, MYR10/day, women 18-45, Malaysia, traffic, shopify, in EN BM CN\"\n\n"
+        f"📂 Ad Accounts:\n"
+        f"• \"cpas sg\" → CPAS Singapore\n"
+        f"• \"cpas my\" → CPAS Malaysia\n"
+        f"• \"shopify\" → Shopify Malaysia (default)\n\n"
         f"Commands:\n"
         f"/start — This message\n"
         f"/status [campaign_id] — Check campaign status\n"
@@ -582,18 +640,32 @@ async def handle_brief(update: Update, context: ContextTypes.DEFAULT_TYPE):
     brief_text = update.message.text
     logger.info(f"Brief received from {user_id}: {brief_text[:100]}...")
 
-    # Step 1: Acknowledge
-    status_msg = await update.message.reply_text("🧠 Generating campaign with Claude AI...")
+    # Step 1: Detect ad account from brief
+    detected_account = detect_ad_account(brief_text)
+
+    # Step 2: Acknowledge
+    status_msg = await update.message.reply_text(
+        f"🧠 Generating campaign with Claude AI...\n"
+        f"📂 Ad Account: {detected_account['name']}"
+    )
 
     try:
-        # Step 2: Generate campaign via Claude
+        # Step 3: Generate campaign via Claude
         campaign = generate_campaign_with_claude(brief_text)
         logger.info(f"Campaign generated: {campaign.get('campaign_name')}")
+
+        # Attach the detected ad account info to the campaign
+        account_key = campaign.get("ad_account", DEFAULT_AD_ACCOUNT)
+        if account_key in AD_ACCOUNTS:
+            campaign["_ad_account"] = AD_ACCOUNTS[account_key]
+        else:
+            campaign["_ad_account"] = detected_account
+        logger.info(f"Using ad account: {campaign['_ad_account']['name']} ({campaign['_ad_account']['id']})")
 
         # Store for approval
         pending_campaigns[user_id] = campaign
 
-        # Step 3: Send preview for approval
+        # Step 4: Send preview for approval
         summary = campaign.get("summary", "Campaign generated successfully.")
         variants_preview = ""
         for v in campaign.get("ad_variants", []):
@@ -601,14 +673,19 @@ async def handle_brief(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lang_tag = f" ({lang})" if lang else ""
             variants_preview += f"\n• [{v.get('angle', '')}{lang_tag}] {v.get('primary_text', '')}"
 
+        acct = campaign.get("_ad_account", detected_account)
+        currency = acct.get("currency", "MYR")
+        budget = campaign.get("adset", {}).get("daily_budget", "?")
+
         preview_text = (
             f"✅ Campaign Ready!\n\n"
+            f"📂 Ad Account: {acct['name']}\n"
             f"📋 {campaign.get('campaign_name', 'Campaign')}\n"
             f"🎯 {campaign.get('objective', 'TRAFFIC')}\n"
-            f"💰 IDR {campaign.get('adset', {}).get('daily_budget', '200,000')}/day\n"
+            f"💰 {currency} {budget} (cents)/day\n"
             f"👥 {campaign.get('adset', {}).get('gender', 'All')}, "
             f"age {campaign.get('adset', {}).get('age_min', 18)}-{campaign.get('adset', {}).get('age_max', 65)}\n"
-            f"📍 {', '.join(campaign.get('adset', {}).get('locations', []))}\n\n"
+            f"📍 {', '.join(str(l) for l in campaign.get('adset', {}).get('locations', []))}\n\n"
             f"📝 Ad Variants:{variants_preview}\n\n"
             f"🖼 Image Prompt:\n{campaign.get('image_prompt', 'N/A')[:200]}...\n\n"
             f"🛡 Policy: {campaign.get('policy_check', 'No issues')}\n\n"
@@ -659,9 +736,10 @@ async def handle_approval(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        await query.edit_message_text("⏳ Creating campaign via Meta API...")
+        acct = campaign.get("_ad_account", AD_ACCOUNTS[DEFAULT_AD_ACCOUNT])
+        await query.edit_message_text(f"⏳ Creating campaign via Meta API...\n📂 Account: {acct['name']}")
 
-        executor = MetaAdsExecutor()
+        executor = MetaAdsExecutor(ad_account_id=acct["id"])
         result = executor.create_full_campaign(campaign)
 
         if result["success"]:
