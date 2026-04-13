@@ -300,7 +300,12 @@ class MetaAdsExecutor:
 
     def _post(self, endpoint, data):
         data["access_token"] = self.token
+        # Convert Python booleans to lowercase strings for form encoding
+        for key, value in data.items():
+            if isinstance(value, bool):
+                data[key] = "true" if value else "false"
         logger.info(f"POST {endpoint} | data keys: {list(data.keys())}")
+        logger.info(f"POST {endpoint} | data values: { {k: v for k, v in data.items() if k != 'access_token'} }")
         resp = requests.post(f"{self.base_url}/{endpoint}", data=data, timeout=30)
         result = resp.json()
         if "error" in result:
@@ -406,10 +411,15 @@ class MetaAdsExecutor:
                 "special_ad_categories": json.dumps([]),
             }
 
-            # CBO: budget at campaign level
             if budget_type == "CBO":
+                # CBO: budget at campaign level, Meta distributes across ad sets
                 campaign_data["daily_budget"] = daily_budget
+                campaign_data["is_campaign_budget_optimization_on"] = "true"
                 logger.info(f"CBO mode: daily_budget {daily_budget} set on campaign")
+            else:
+                # ABO: explicitly tell campaign that CBO is OFF
+                campaign_data["is_campaign_budget_optimization_on"] = "false"
+                logger.info("ABO mode: CBO disabled on campaign, budget will be on ad set")
 
             camp_result = self._post(f"{self.account_id}/campaigns", campaign_data)
             campaign_id = camp_result["id"]
@@ -480,13 +490,15 @@ class MetaAdsExecutor:
                 "status": "PAUSED",
             }
 
+            # ALWAYS set this field — Meta requires it on every ad set
+            adset_data["is_adset_budget_sharing_enabled"] = "false"
+
             if budget_type == "CBO":
-                # CBO: no budget on adset, no budget sharing field needed
+                # CBO: no budget on adset (campaign controls budget)
                 logger.info("CBO mode: no budget on ad set (campaign controls budget)")
             else:
                 # ABO: budget on adset level
                 adset_data["daily_budget"] = daily_budget
-                adset_data["is_adset_budget_sharing_enabled"] = "false"
                 logger.info(f"ABO mode: daily_budget {daily_budget} set on ad set")
 
             # Add destination_type for traffic campaigns
