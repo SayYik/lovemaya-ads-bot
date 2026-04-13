@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-BOT_VERSION = "v2.5"  # Change this to verify Railway deploys the latest file
+BOT_VERSION = "v2.7"  # Change this to verify Railway deploys the latest file
 """
 Lovemaya Meta Ads Bot
 ======================
@@ -126,6 +126,37 @@ def detect_budget_type(text: str) -> str:
     return "ABO"
 
 
+# ─────────────────────────────────────────────
+# AUDIENCE TYPE — Advantage+ vs Manual Targeting
+# ─────────────────────────────────────────────
+
+def detect_audience_type(text: str) -> str:
+    """
+    Detect audience type from the brief.
+    ADV+  = Advantage+ Audience (Meta AI expands your targeting automatically)
+    MANUAL = Manual Targeting (use exact targeting you specify, default)
+
+    Keywords:
+    - "adv+", "advantage+", "advantage audience", "broad targeting", "ai audience" → ADV+
+    - "manual targeting", "exact targeting", "adv-", "no advantage" → MANUAL
+    """
+    text_lower = text.lower()
+    adv_keywords = ["adv+", "advantage+", "advantage audience", "broad targeting", "ai audience", "advantage plus"]
+    manual_keywords = ["manual targeting", "exact targeting", "adv-", "no advantage", "manual audience"]
+
+    for kw in adv_keywords:
+        if kw in text_lower:
+            logger.info(f"Audience type detected: ADV+ (matched '{kw}')")
+            return "ADV+"
+    for kw in manual_keywords:
+        if kw in text_lower:
+            logger.info(f"Audience type detected: MANUAL (matched '{kw}')")
+            return "MANUAL"
+
+    logger.info("No audience type keyword found, using default: MANUAL")
+    return "MANUAL"
+
+
 # Store pending campaigns waiting for approval
 pending_campaigns = {}
 
@@ -242,6 +273,7 @@ RULES:
 - Default targeting: Malaysia. Use specific states/cities if the user mentions them
 - If the brief is missing info, use sensible Lovemaya defaults for Malaysian market
 - BUDGET TYPE: If user says "CBO" or "campaign budget" → Campaign Budget Optimization. If "ABO" or "adset budget" → Ad Set Budget. Default is ABO.
+- AUDIENCE TYPE: If user says "adv+" or "advantage+" → Advantage+ Audience (Meta AI expands targeting). If "manual targeting" or "adv-" → Manual Targeting (exact targeting). Default is Manual.
 """
 
 
@@ -482,6 +514,15 @@ class MetaAdsExecutor:
             else:
                 results["warnings"].append("No interests could be resolved, using broad targeting")
 
+            # Set Advantage+ audience based on user's choice
+            audience_type = campaign.get("_audience_type", "MANUAL")
+            if audience_type == "ADV+":
+                targeting["targeting_automation"] = {"advantage_audience": 1}
+                logger.info("Advantage+ Audience ENABLED — Meta AI will expand targeting")
+            else:
+                targeting["targeting_automation"] = {"advantage_audience": 0}
+                logger.info("Manual Targeting — using exact targeting specified")
+
             logger.info(f"Targeting built: {json.dumps(targeting)[:200]}")
 
             # ── 3. CREATE AD SET ──
@@ -706,16 +747,19 @@ async def handle_brief(update: Update, context: ContextTypes.DEFAULT_TYPE):
     brief_text = update.message.text
     logger.info(f"Brief received from {user_id}: {brief_text[:100]}...")
 
-    # Step 1: Detect ad account and budget type from brief
+    # Step 1: Detect ad account, budget type, and audience type from brief
     detected_account = detect_ad_account(brief_text)
     budget_type = detect_budget_type(brief_text)
+    audience_type = detect_audience_type(brief_text)
 
     # Step 2: Acknowledge
     budget_label = "Campaign Budget (CBO)" if budget_type == "CBO" else "Ad Set Budget (ABO)"
+    audience_label = "Advantage+ Audience (AI)" if audience_type == "ADV+" else "Manual Targeting"
     status_msg = await update.message.reply_text(
         f"🧠 Generating campaign with Claude AI...\n"
         f"📂 Ad Account: {detected_account['name']}\n"
-        f"💰 Budget Type: {budget_label}"
+        f"💰 Budget Type: {budget_label}\n"
+        f"👥 Audience: {audience_label}"
     )
 
     try:
@@ -730,8 +774,10 @@ async def handle_brief(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             campaign["_ad_account"] = detected_account
         campaign["_budget_type"] = budget_type
+        campaign["_audience_type"] = audience_type
         logger.info(f"Using ad account: {campaign['_ad_account']['name']} ({campaign['_ad_account']['id']})")
         logger.info(f"Budget type: {budget_type}")
+        logger.info(f"Audience type: {audience_type}")
 
         # Store for approval
         pending_campaigns[user_id] = campaign
@@ -748,6 +794,7 @@ async def handle_brief(update: Update, context: ContextTypes.DEFAULT_TYPE):
         currency = acct.get("currency", "MYR")
         budget = campaign.get("adset", {}).get("daily_budget", "?")
         budget_label = "Campaign Budget (CBO)" if budget_type == "CBO" else "Ad Set Budget (ABO)"
+        audience_label = "Advantage+ (AI)" if campaign.get("_audience_type") == "ADV+" else "Manual"
 
         preview_text = (
             f"✅ Campaign Ready!\n\n"
@@ -755,6 +802,7 @@ async def handle_brief(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📋 {campaign.get('campaign_name', 'Campaign')}\n"
             f"🎯 {campaign.get('objective', 'TRAFFIC')}\n"
             f"💰 {currency} {budget} (cents)/day — {budget_label}\n"
+            f"🧠 Audience: {audience_label}\n"
             f"👥 {campaign.get('adset', {}).get('gender', 'All')}, "
             f"age {campaign.get('adset', {}).get('age_min', 18)}-{campaign.get('adset', {}).get('age_max', 65)}\n"
             f"📍 {', '.join(str(l) for l in campaign.get('adset', {}).get('locations', []))}\n\n"
