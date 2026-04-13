@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-BOT_VERSION = "v3.0"  # Change this to verify Railway deploys the latest file
+BOT_VERSION = "v3.1"  # Change this to verify Railway deploys the latest file
 """
 Lovemaya Meta Ads Bot
 ======================
@@ -159,6 +159,65 @@ def detect_audience_type(text: str) -> str:
 
 # Store pending campaigns waiting for approval
 pending_campaigns = {}
+
+# ─────────────────────────────────────────────
+# DTC PERSONAL CARE KNOWLEDGE BASE
+# ─────────────────────────────────────────────
+
+DTC_KNOWLEDGE = """
+DTC PERSONAL CARE BRAND INTELLIGENCE (learned from top brands like Glossier, Dr. Squatch, Sol de Janeiro, CeraVe, Native, Lush, Drunk Elephant, Nécessaire, Billie, The Ordinary):
+
+AD FORMAT BEST PRACTICES:
+- Carousel Ads: 30-50% lower cost per conversion than single images. Best ROAS. Use for product collections, routine steps, before/after.
+- Static Images: Best for prospecting efficiency (low CPM/CPC). Recommended mix: 60% static + 40% video.
+- Video Ads: 6-15s for awareness, 15-30s for testimonials. Highest engagement but costlier.
+- Produce 10-15 new creative variations monthly to combat ad fatigue.
+
+PROVEN AD COPY ANGLES FOR BODY CARE:
+1. BENEFIT-LED: Focus on ONE specific outcome (hydration, glow, softness, scent longevity). "Skin so soft, you can't stop touching it"
+2. SENSORY/EMOTIONAL: Describe fragrance and texture to create anticipation. "Like a tropical vacation in a bottle"
+3. INGREDIENT-FOCUSED: Highlight hero ingredients. "Powered by shea butter & vitamin E"
+4. SOCIAL PROOF: Reviews, ratings, before/after. "Join 50,000+ women who switched"
+5. ROUTINE-BASED: Show product as part of daily ritual. "Your new 2-minute glow routine"
+6. URGENCY/SCARCITY: Limited editions, seasonal scents. "New scent — only 500 bottles"
+7. VALUE/BUNDLE: Emphasize savings. "Get the full set — save 30%"
+8. FOUNDER STORY: Personal authenticity. "I created this because I couldn't find..."
+9. COMPARE & SWITCH: Position against alternatives. "Why 10,000 women switched from [generic]"
+10. UGC/TESTIMONIAL: Real customer voice. "I've tried everything — this actually works"
+
+FUNNEL STRUCTURE FOR DTC BODY CARE:
+- AWARENESS (top): Educational content, brand story, ingredient spotlight, founder content
+  → Objective: OUTCOME_AWARENESS, optimize: REACH
+  → Budget: 30-40% of total
+- CONSIDERATION (mid): Tutorials, comparisons, testimonials, routine videos
+  → Objective: OUTCOME_TRAFFIC, optimize: LINK_CLICKS
+  → Budget: 30-40% of total
+- CONVERSION (bottom): Strong offers, dynamic product ads, urgency
+  → Objective: OUTCOME_SALES, optimize: OFFSITE_CONVERSIONS
+  → Budget: 20-30% of total
+
+SEASONAL CAMPAIGN IDEAS:
+- JAN-FEB: "New Year Glow Up" — renewal messaging, self-care resolutions
+- MAR-APR: "Spring Fresh" — lightweight formulas, floral scents, renewal
+- MAY-JUN: "Summer Ready" — body mist, SPF, lightweight hydration
+- JUL-AUG: "Glow Season" — shimmer, tropical scents, beach-ready
+- SEP-OCT: "Back to Routine" — skincare essentials, bundles, early holiday teasers
+- NOV-DEC: "Holiday Gifting" — gift sets, limited editions, BOGO, 12 Days of Deals
+
+TARGETING BEST PRACTICES (2025-2026):
+- Meta now favors BROAD targeting over narrow segments (audiences 10M+ perform best)
+- Advantage+ (AI audience) often outperforms manual targeting for prospecting
+- Manual targeting works better for retargeting warm audiences
+- Budget split: 70-80% prospecting (cold), 20-30% retargeting (warm)
+
+WINNING STRATEGIES FROM TOP BRANDS:
+- Sol de Janeiro: Bold colors, sensory marketing, strong scent storytelling
+- CeraVe: Dermatologist partnerships, educational content, ingredient transparency
+- Glossier: Minimalist aesthetic, community-driven UGC, aspirational simplicity
+- Dr. Squatch: Aggressive video content, humor, masculine self-care positioning
+- Lush: UGC-first (500K+ hashtag mentions/month), values-driven messaging
+- Native: Visual-first content, 100+ active ads, always-on testing approach
+"""
 
 # ─────────────────────────────────────────────
 # LEARNING MEMORY — Bot remembers your preferences
@@ -352,8 +411,8 @@ def generate_campaign_with_claude(brief_text: str) -> dict:
     """Send brief to Claude API and get structured campaign JSON."""
     client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
 
-    # Add learned preferences to the system prompt
-    full_system = BRAND_SYSTEM_PROMPT + get_memory_prompt()
+    # Add DTC knowledge + learned preferences to the system prompt
+    full_system = BRAND_SYSTEM_PROMPT + "\n" + DTC_KNOWLEDGE + get_memory_prompt()
 
     message = client.messages.create(
         model="claude-sonnet-4-20250514",
@@ -818,6 +877,10 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• No language mentioned → defaults to EN, BM, CN\n"
         "• \"in english and chinese\" → 2 variants\n"
         "• \"EN BM CN Tamil\" → 4 variants\n\n"
+        "💡 STRATEGY COMMANDS:\n"
+        "/ideas [product] — Get 5 campaign ideas based on DTC trends\n"
+        "/learn [brand] — Study a competitor's ad strategy\n"
+        "/funnel [product] [budget] — Full-funnel campaign plan\n\n"
         "🧠 LEARNING COMMANDS:\n"
         "/feedback [text] — Teach me your preferences\n"
         "/memory — See what I've learned\n"
@@ -848,6 +911,203 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📊 Campaign: {result.get('name', 'N/A')}\n"
             f"Status: {result.get('effective_status', 'Unknown')}"
         )
+    except Exception as e:
+        await update.message.reply_text(f"Error: {e}")
+
+
+async def cmd_ideas(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Generate campaign ideas based on DTC knowledge and product."""
+    if not is_authorized(update.effective_user.id):
+        await update.message.reply_text("Sorry, you're not authorized.")
+        return
+
+    product_text = " ".join(context.args) if context.args else ""
+    if not product_text:
+        await update.message.reply_text(
+            "💡 Tell me a product and I'll suggest campaign ideas!\n\n"
+            "Examples:\n"
+            "/ideas bath gel\n"
+            "/ideas body mist jasmine\n"
+            "/ideas lotion gift set\n"
+            "/ideas body scrub for ramadan"
+        )
+        return
+
+    await update.message.reply_text("🧠 Analyzing DTC trends and generating ideas...")
+
+    try:
+        client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
+        today = datetime.now().strftime("%B %Y")
+
+        ideas_prompt = f"""You are a DTC personal care marketing strategist. Based on your knowledge of successful brands like Sol de Janeiro, Glossier, CeraVe, Dr. Squatch, and Native, suggest 5 campaign ideas for Lovemaya.
+
+{DTC_KNOWLEDGE}
+
+{get_memory_prompt()}
+
+Product: {product_text}
+Current month: {today}
+Brand: Lovemaya (Malaysian body care brand — bath gel, lotion, body mist, scrub)
+Market: Malaysia & Singapore
+
+For each idea provide:
+1. Campaign Name — catchy and specific
+2. Angle — which proven angle to use (benefit-led, sensory, social proof, etc.)
+3. Objective — awareness, traffic, or sales
+4. Hook — the first line of ad copy (attention-grabbing)
+5. Why It Works — 1 sentence explaining the DTC strategy behind it
+6. Suggested Budget — daily budget in MYR
+
+Keep it practical and actionable. Format clearly with numbers and emojis."""
+
+        message = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=2048,
+            messages=[{"role": "user", "content": ideas_prompt}]
+        )
+
+        ideas = message.content[0].text.strip()
+        # Split into chunks if too long for Telegram (4096 char limit)
+        if len(ideas) > 4000:
+            parts = [ideas[i:i+4000] for i in range(0, len(ideas), 4000)]
+            for part in parts:
+                await update.message.reply_text(part)
+        else:
+            await update.message.reply_text(f"💡 Campaign Ideas for {product_text}:\n\n{ideas}")
+
+    except Exception as e:
+        await update.message.reply_text(f"Error generating ideas: {e}")
+
+
+async def cmd_learn(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Research a competitor brand's ad strategy."""
+    if not is_authorized(update.effective_user.id):
+        await update.message.reply_text("Sorry, you're not authorized.")
+        return
+
+    brand_text = " ".join(context.args) if context.args else ""
+    if not brand_text:
+        await update.message.reply_text(
+            "🔍 Tell me a brand to study!\n\n"
+            "Examples:\n"
+            "/learn Sol de Janeiro\n"
+            "/learn Glossier\n"
+            "/learn CeraVe\n"
+            "/learn Dr. Squatch\n"
+            "/learn any Malaysian body care brand"
+        )
+        return
+
+    await update.message.reply_text(f"🔍 Studying {brand_text}'s ad strategy...")
+
+    try:
+        client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
+
+        learn_prompt = f"""You are a DTC advertising analyst. Research and analyze the Meta/Instagram advertising strategy of: {brand_text}
+
+Focus on:
+1. Their brand positioning and unique selling points
+2. Ad copy angles they commonly use
+3. Visual style and creative formats
+4. Target audience and messaging approach
+5. What Lovemaya (Malaysian body care: bath gel, lotion, body mist, scrub) can LEARN and ADAPT from this brand
+6. Specific actionable takeaways — ad copy examples, angles to test, creative ideas
+
+{DTC_KNOWLEDGE}
+
+Be specific and practical. Give examples of ad copy hooks that Lovemaya could adapt. Format with emojis for readability."""
+
+        message = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=2048,
+            messages=[{"role": "user", "content": learn_prompt}]
+        )
+
+        analysis = message.content[0].text.strip()
+        if len(analysis) > 4000:
+            parts = [analysis[i:i+4000] for i in range(0, len(analysis), 4000)]
+            for part in parts:
+                await update.message.reply_text(part)
+        else:
+            await update.message.reply_text(f"🔍 Brand Analysis: {brand_text}\n\n{analysis}")
+
+    except Exception as e:
+        await update.message.reply_text(f"Error: {e}")
+
+
+async def cmd_funnel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Suggest a full-funnel campaign structure for a product."""
+    if not is_authorized(update.effective_user.id):
+        await update.message.reply_text("Sorry, you're not authorized.")
+        return
+
+    product_text = " ".join(context.args) if context.args else ""
+    if not product_text:
+        await update.message.reply_text(
+            "🔻 Tell me a product and total budget, I'll plan your full funnel!\n\n"
+            "Examples:\n"
+            "/funnel bath gel MYR50/day\n"
+            "/funnel body mist collection MYR100/day\n"
+            "/funnel new product launch MYR30/day"
+        )
+        return
+
+    await update.message.reply_text("🔻 Building your full-funnel strategy...")
+
+    try:
+        client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
+        today = datetime.now().strftime("%B %Y")
+
+        funnel_prompt = f"""You are a DTC performance marketing strategist. Create a full-funnel Meta Ads campaign structure for Lovemaya.
+
+{DTC_KNOWLEDGE}
+
+{get_memory_prompt()}
+
+Product/Brief: {product_text}
+Current month: {today}
+Brand: Lovemaya (Malaysian body care)
+
+Create a 3-tier funnel with:
+
+🔹 TOP OF FUNNEL (Awareness):
+- Campaign objective, optimization goal
+- Budget allocation (% of total)
+- Ad format recommendation
+- 2 ad copy hooks
+- Targeting approach
+
+🔹 MID FUNNEL (Consideration):
+- Campaign objective, optimization goal
+- Budget allocation
+- Ad format recommendation
+- 2 ad copy hooks
+- Targeting (retargeting strategy)
+
+🔹 BOTTOM FUNNEL (Conversion):
+- Campaign objective, optimization goal
+- Budget allocation
+- Ad format recommendation
+- 2 ad copy hooks with offers
+- Targeting (warm audiences)
+
+Also suggest: timeline, KPIs to track, and when to scale.
+Format clearly with emojis. Be specific with actual ad copy examples."""
+
+        message = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=2048,
+            messages=[{"role": "user", "content": funnel_prompt}]
+        )
+
+        funnel = message.content[0].text.strip()
+        if len(funnel) > 4000:
+            parts = [funnel[i:i+4000] for i in range(0, len(funnel), 4000)]
+            for part in parts:
+                await update.message.reply_text(part)
+        else:
+            await update.message.reply_text(f"🔻 Full Funnel Plan:\n\n{funnel}")
+
     except Exception as e:
         await update.message.reply_text(f"Error: {e}")
 
@@ -1146,6 +1406,9 @@ def main():
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("status", cmd_status))
+    app.add_handler(CommandHandler("ideas", cmd_ideas))
+    app.add_handler(CommandHandler("learn", cmd_learn))
+    app.add_handler(CommandHandler("funnel", cmd_funnel))
     app.add_handler(CommandHandler("feedback", cmd_feedback))
     app.add_handler(CommandHandler("memory", cmd_memory))
     app.add_handler(CommandHandler("forget", cmd_forget))
