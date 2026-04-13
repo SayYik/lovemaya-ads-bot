@@ -486,7 +486,6 @@ class MetaAdsExecutor:
                 "campaign_id": campaign_id,
                 "billing_event": "IMPRESSIONS",
                 "optimization_goal": adset.get("optimization_goal", "LINK_CLICKS").upper(),
-                "bid_strategy": "LOWEST_COST_WITHOUT_CAP",
                 "targeting": json.dumps(targeting),
                 "status": "PAUSED",
             }
