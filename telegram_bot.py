@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-BOT_VERSION = "v5.8"  # Change this to verify Railway deploys the latest file
+BOT_VERSION = "v6.0"  # Change this to verify Railway deploys the latest file
 """
 Lovemaya Meta Ads Bot
 ======================
@@ -1425,6 +1425,11 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• No language mentioned → defaults to EN, BM, CN\n"
         "• \"in english and chinese\" → 2 variants\n"
         "• \"EN BM CN Tamil\" → 4 variants\n\n"
+        "📊 PERFORMANCE COMMANDS:\n"
+        "/performance — Analyze all campaigns (SCALE/IMPROVE/KILL)\n"
+        "/performance 3d — Last 3 days | 7d | 14d | 30d | today\n"
+        "/drill [keyword] — Drill into ad-level metrics for a campaign\n"
+        "/spy [brand] — Search competitor ads on Meta Ad Library\n\n"
         "💡 STRATEGY COMMANDS:\n"
         "/ideas [product] — Get 5 campaign ideas based on DTC trends\n"
         "/learn [brand] — Study a competitor's ad strategy\n"
@@ -1828,6 +1833,505 @@ async def cmd_forget(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     save_memory([])
     await update.message.reply_text("🗑 All memories cleared. Starting fresh!")
+
+
+# ─────────────────────────────────────────────
+# PERFORMANCE ANALYZER — Pull live Meta data, analyze, recommend
+# ─────────────────────────────────────────────
+
+PERFORMANCE_RULES = {
+    "SCALE": {
+        "description": "Performing well — increase budget",
+        "conditions": "ROAS >= 3.0 OR (CTR >= 2.0% AND CPC <= MYR 1.50)"
+    },
+    "IMPROVE": {
+        "description": "Decent but needs optimization",
+        "conditions": "ROAS 1.5-3.0 OR (CTR 1.0-2.0% AND moderate CPC)"
+    },
+    "KILL": {
+        "description": "Underperforming — turn off",
+        "conditions": "ROAS < 1.5 AND running > 3 days AND spend > MYR 50"
+    },
+}
+
+ANALYSIS_PROMPT = """You are a Meta Ads performance analyst for Lovemaya (Malaysian body care brand).
+
+Analyze these campaign performance metrics and give actionable recommendations.
+
+CAMPAIGN DATA:
+{campaign_data}
+
+PERFORMANCE RULES:
+- SCALE (🟢): ROAS >= 3.0, or CTR >= 2.0% with CPC under MYR 1.50. These are winners — increase budget 20-50%.
+- IMPROVE (🟡): ROAS 1.5-3.0, or decent CTR but high CPC. Test new creative, adjust audience, or change bid.
+- KILL (🔴): ROAS < 1.5 after spending > MYR 50 over 3+ days. Not working — turn off.
+- WATCH (👀): Too early to tell — less than MYR 30 spent or running < 2 days.
+
+For EACH campaign/ad set, provide:
+1. Verdict: SCALE / IMPROVE / KILL / WATCH
+2. Why: cite the specific metrics driving the verdict
+3. Action: ONE specific thing to do (increase budget by X%, change audience to Y, kill and reallocate to Z, etc.)
+
+Also include:
+- Overall account health summary (1-2 sentences)
+- Top performer and why
+- Biggest waste and why
+- One strategic recommendation for next week
+
+BRAND LEARNINGS:
+{learnings}
+
+Be direct and specific. Use numbers. No fluff."""
+
+
+async def cmd_performance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Pull live Meta Ads performance and give SCALE/IMPROVE/KILL recommendations."""
+    user_id = update.effective_user.id
+    if not is_authorized(user_id):
+        await update.message.reply_text("Sorry, you're not authorized.")
+        return
+
+    # Parse time range from command args
+    args = context.args
+    date_preset = "last_7d"
+    range_label = "Last 7 Days"
+    if args:
+        arg = args[0].lower()
+        presets = {
+            "today": ("today", "Today"),
+            "yesterday": ("yesterday", "Yesterday"),
+            "3d": ("last_3d", "Last 3 Days"),
+            "7d": ("last_7d", "Last 7 Days"),
+            "14d": ("last_14d", "Last 14 Days"),
+            "30d": ("last_30d", "Last 30 Days"),
+            "month": ("this_month", "This Month"),
+        }
+        if arg in presets:
+            date_preset, range_label = presets[arg]
+
+    await update.message.reply_text(f"📊 Pulling performance data ({range_label})...")
+
+    try:
+        # Pull data from ALL ad accounts
+        all_campaign_data = []
+        for acct_key, acct in AD_ACCOUNTS.items():
+            acct_id = acct["id"]
+            currency = acct.get("currency", "MYR")
+
+            # Get campaigns with insights
+            campaigns_url = f"https://graph.facebook.com/v21.0/{acct_id}/campaigns"
+            params = {
+                "access_token": META_ACCESS_TOKEN,
+                "fields": "name,status,objective,daily_budget,lifetime_budget,start_time",
+                "filtering": json.dumps([{"field": "status", "operator": "IN", "value": ["ACTIVE", "PAUSED"]}]),
+                "limit": 50,
+            }
+            resp = requests.get(campaigns_url, params=params, timeout=30)
+            campaigns = resp.json().get("data", [])
+
+            for camp in campaigns:
+                camp_id = camp["id"]
+                camp_name = camp.get("name", "Unknown")
+
+                # Get campaign-level insights
+                insights_url = f"https://graph.facebook.com/v21.0/{camp_id}/insights"
+                insights_params = {
+                    "access_token": META_ACCESS_TOKEN,
+                    "fields": "spend,impressions,clicks,cpc,cpm,ctr,frequency,actions,action_values,cost_per_action_type",
+                    "date_preset": date_preset,
+                }
+                insights_resp = requests.get(insights_url, params=insights_params, timeout=30)
+                insights = insights_resp.json().get("data", [])
+
+                if insights:
+                    ins = insights[0]
+                    # Extract purchase/conversion metrics
+                    purchases = 0
+                    purchase_value = 0
+                    for action in ins.get("actions", []):
+                        if action["action_type"] in ("purchase", "offsite_conversion.fb_pixel_purchase"):
+                            purchases = int(action.get("value", 0))
+                    for av in ins.get("action_values", []):
+                        if av["action_type"] in ("purchase", "offsite_conversion.fb_pixel_purchase"):
+                            purchase_value = float(av.get("value", 0))
+
+                    spend = float(ins.get("spend", 0))
+                    roas = round(purchase_value / spend, 2) if spend > 0 else 0
+
+                    # Calculate CPA
+                    cpa = round(spend / purchases, 2) if purchases > 0 else 0
+
+                    campaign_info = {
+                        "account": acct["name"],
+                        "currency": currency,
+                        "campaign": camp_name,
+                        "status": camp.get("status"),
+                        "objective": camp.get("objective", ""),
+                        "spend": round(spend, 2),
+                        "impressions": int(ins.get("impressions", 0)),
+                        "clicks": int(ins.get("clicks", 0)),
+                        "cpc": round(float(ins.get("cpc", 0)), 2),
+                        "cpm": round(float(ins.get("cpm", 0)), 2),
+                        "ctr": round(float(ins.get("ctr", 0)), 2),
+                        "frequency": round(float(ins.get("frequency", 0)), 2),
+                        "purchases": purchases,
+                        "purchase_value": round(purchase_value, 2),
+                        "roas": roas,
+                        "cpa": cpa,
+                    }
+                    all_campaign_data.append(campaign_info)
+                else:
+                    # No data for this period
+                    all_campaign_data.append({
+                        "account": acct["name"],
+                        "currency": currency,
+                        "campaign": camp_name,
+                        "status": camp.get("status"),
+                        "objective": camp.get("objective", ""),
+                        "spend": 0, "impressions": 0, "clicks": 0,
+                        "cpc": 0, "cpm": 0, "ctr": 0, "frequency": 0,
+                        "purchases": 0, "purchase_value": 0, "roas": 0, "cpa": 0,
+                    })
+
+        if not all_campaign_data:
+            await update.message.reply_text("📭 No campaigns found across your ad accounts.")
+            return
+
+        # Quick summary before AI analysis
+        total_spend = sum(c["spend"] for c in all_campaign_data)
+        total_revenue = sum(c["purchase_value"] for c in all_campaign_data)
+        total_purchases = sum(c["purchases"] for c in all_campaign_data)
+        active_count = sum(1 for c in all_campaign_data if c["status"] == "ACTIVE")
+        overall_roas = round(total_revenue / total_spend, 2) if total_spend > 0 else 0
+
+        quick_summary = (
+            f"📊 **Performance Overview** ({range_label})\n\n"
+            f"💰 Total Spend: MYR {total_spend:,.2f}\n"
+            f"💵 Total Revenue: MYR {total_revenue:,.2f}\n"
+            f"📈 Overall ROAS: {overall_roas}x\n"
+            f"🛒 Total Purchases: {total_purchases}\n"
+            f"📋 Campaigns: {active_count} active, {len(all_campaign_data)} total\n\n"
+            f"🤖 Analyzing with AI..."
+        )
+        await update.message.reply_text(quick_summary, parse_mode="Markdown")
+
+        # Send to Claude for analysis
+        client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
+        memories = load_memory()
+        learnings_text = "\n".join([m.get("text", "")[:200] for m in memories[-10:]]) if memories else "No learnings yet."
+
+        analysis_msg = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=3000,
+            messages=[{"role": "user", "content": ANALYSIS_PROMPT.format(
+                campaign_data=json.dumps(all_campaign_data, indent=2),
+                learnings=learnings_text,
+            )}]
+        )
+
+        analysis = analysis_msg.content[0].text.strip()
+
+        # Split long messages (Telegram has 4096 char limit)
+        if len(analysis) > 4000:
+            parts = [analysis[i:i+4000] for i in range(0, len(analysis), 4000)]
+            for part in parts:
+                await update.message.reply_text(part)
+        else:
+            await update.message.reply_text(analysis)
+
+        # Auto-learn: save performance insights to memory
+        performance_learning = {
+            "type": "performance_analysis",
+            "date": datetime.now().strftime("%Y-%m-%d"),
+            "range": range_label,
+            "total_spend": total_spend,
+            "overall_roas": overall_roas,
+            "total_purchases": total_purchases,
+            "text": f"Performance {range_label}: ROAS {overall_roas}x, {total_purchases} purchases, MYR {total_spend:.0f} spent. "
+                    f"Top: {max(all_campaign_data, key=lambda x: x['roas'])['campaign'] if all_campaign_data else 'N/A'} "
+                    f"(ROAS {max(all_campaign_data, key=lambda x: x['roas'])['roas'] if all_campaign_data else 0}x)",
+        }
+        memories = load_memory()
+        # Keep only last 20 performance memories to avoid bloat
+        perf_memories = [m for m in memories if m.get("type") != "performance_analysis"]
+        perf_only = [m for m in memories if m.get("type") == "performance_analysis"]
+        perf_only.append(performance_learning)
+        perf_only = perf_only[-20:]
+        save_memory(perf_memories + perf_only)
+
+        logger.info(f"Performance analysis complete: {len(all_campaign_data)} campaigns, ROAS {overall_roas}x")
+
+    except Exception as e:
+        logger.error(f"Performance analysis failed: {e}")
+        await update.message.reply_text(f"❌ Error pulling performance data: {e}")
+
+
+# ─────────────────────────────────────────────
+# COMPETITOR SPY — Monitor competitor ads via Ad Library API
+# ─────────────────────────────────────────────
+
+AD_LIBRARY_URL = "https://graph.facebook.com/v21.0/ads_archive"
+
+async def cmd_spy(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Search Meta Ad Library for competitor ads."""
+    user_id = update.effective_user.id
+    if not is_authorized(user_id):
+        await update.message.reply_text("Sorry, you're not authorized.")
+        return
+
+    args = context.args
+    if not args:
+        await update.message.reply_text(
+            "🕵️ **Competitor Spy**\n\n"
+            "Usage: `/spy [brand name]`\n\n"
+            "Examples:\n"
+            "• `/spy Sol de Janeiro`\n"
+            "• `/spy Lush Malaysia`\n"
+            "• `/spy CeraVe`\n"
+            "• `/spy Native body care`\n\n"
+            "I'll search Meta Ad Library and show you their active ads, "
+            "then analyze their strategy for you to learn from.",
+            parse_mode="Markdown",
+        )
+        return
+
+    search_term = " ".join(args)
+    await update.message.reply_text(f"🔍 Searching Meta Ad Library for **{search_term}**...", parse_mode="Markdown")
+
+    try:
+        params = {
+            "access_token": META_ACCESS_TOKEN,
+            "search_terms": search_term,
+            "ad_reached_countries": '["MY"]',
+            "ad_active_status": "ACTIVE",
+            "fields": "ad_creative_bodies,ad_creative_link_titles,ad_creative_link_descriptions,page_name,ad_delivery_start_time,ad_snapshot_url,spend,impressions",
+            "limit": 10,
+        }
+        resp = requests.get(AD_LIBRARY_URL, params=params, timeout=30)
+        data = resp.json()
+
+        ads = data.get("data", [])
+        if not ads:
+            # Try without country filter
+            params.pop("ad_reached_countries")
+            resp = requests.get(AD_LIBRARY_URL, params=params, timeout=30)
+            data = resp.json()
+            ads = data.get("data", [])
+
+        if not ads:
+            await update.message.reply_text(
+                f"📭 No active ads found for \"{search_term}\".\n\n"
+                f"Tips:\n• Try the exact brand name\n• Try adding the country (e.g., \"{search_term} Malaysia\")\n"
+                f"• Some brands may not be running ads right now"
+            )
+            return
+
+        # Format and display ads
+        ads_text = f"🕵️ **Found {len(ads)} active ads for \"{search_term}\":**\n\n"
+
+        ads_for_analysis = []
+        for i, ad in enumerate(ads[:8]):
+            page_name = ad.get("page_name", "Unknown")
+            bodies = ad.get("ad_creative_bodies", [])
+            titles = ad.get("ad_creative_link_titles", [])
+            descriptions = ad.get("ad_creative_link_descriptions", [])
+            start_date = ad.get("ad_delivery_start_time", "")[:10]
+            snapshot_url = ad.get("ad_snapshot_url", "")
+
+            body_text = bodies[0][:200] if bodies else "No copy"
+            title_text = titles[0][:100] if titles else "No headline"
+            desc_text = descriptions[0][:100] if descriptions else ""
+
+            ads_text += (
+                f"**Ad {i+1}** — {page_name}\n"
+                f"📅 Running since: {start_date}\n"
+                f"📝 Copy: {body_text}\n"
+                f"🏷 Headline: {title_text}\n"
+            )
+            if desc_text:
+                ads_text += f"📄 Description: {desc_text}\n"
+            if snapshot_url:
+                ads_text += f"🔗 [View Ad]({snapshot_url})\n"
+            ads_text += "\n"
+
+            ads_for_analysis.append({
+                "page": page_name,
+                "copy": body_text,
+                "headline": title_text,
+                "description": desc_text,
+                "running_since": start_date,
+            })
+
+        # Send ad list
+        if len(ads_text) > 4000:
+            parts = [ads_text[i:i+4000] for i in range(0, len(ads_text), 4000)]
+            for part in parts:
+                await update.message.reply_text(part, parse_mode="Markdown", disable_web_page_preview=True)
+        else:
+            await update.message.reply_text(ads_text, parse_mode="Markdown", disable_web_page_preview=True)
+
+        # Analyze with Claude
+        await update.message.reply_text("🤖 Analyzing competitor strategy...")
+
+        client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
+        spy_prompt = f"""Analyze these competitor ads from "{search_term}" found on Meta Ad Library.
+
+COMPETITOR ADS:
+{json.dumps(ads_for_analysis, indent=2)}
+
+You are analyzing this for Lovemaya, a Malaysian personal care brand (bath gel, body lotion, perfume, hand cream).
+
+Provide:
+1. **Messaging Patterns**: What angles are they using? (benefit, social proof, urgency, discount, etc.)
+2. **Copy Style**: Tone, length, language choices, CTAs
+3. **What's Working**: Which ads have been running longest (= probably working)
+4. **Gaps & Opportunities**: What are they NOT doing that Lovemaya could do?
+5. **Steal-Worthy Ideas**: 2-3 specific creative concepts Lovemaya could adapt (not copy)
+6. **Suggested Lovemaya Response**: A brief (1-2 sentences) that Lovemaya could use to counter or differentiate
+
+Be specific and actionable. Reference actual ad copy from the data."""
+
+        analysis_msg = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=2000,
+            messages=[{"role": "user", "content": spy_prompt}]
+        )
+
+        analysis = analysis_msg.content[0].text.strip()
+
+        if len(analysis) > 4000:
+            parts = [analysis[i:i+4000] for i in range(0, len(analysis), 4000)]
+            for part in parts:
+                await update.message.reply_text(part)
+        else:
+            await update.message.reply_text(analysis)
+
+        # Save competitor insights to memory
+        spy_learning = {
+            "type": "competitor_research",
+            "brand": search_term,
+            "date": datetime.now().strftime("%Y-%m-%d"),
+            "ads_found": len(ads),
+            "text": f"Competitor spy on {search_term} ({len(ads)} active ads found). "
+                    f"Key angles: {', '.join(set(a.get('headline', '') for a in ads_for_analysis[:5]))}. "
+                    f"Running since: {ads_for_analysis[0].get('running_since', 'unknown') if ads_for_analysis else 'N/A'}."
+        }
+        memories = load_memory()
+        memories.append(spy_learning)
+        save_memory(memories[-50:])  # Keep last 50 memories
+
+        logger.info(f"Competitor spy complete: {search_term}, {len(ads)} ads found")
+
+    except Exception as e:
+        logger.error(f"Competitor spy failed: {e}")
+        await update.message.reply_text(f"❌ Error searching Ad Library: {e}")
+
+
+# ─────────────────────────────────────────────
+# AD-LEVEL PERFORMANCE — Drill into specific campaigns
+# ─────────────────────────────────────────────
+
+async def cmd_drill(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Drill into ad-level performance for a specific campaign."""
+    user_id = update.effective_user.id
+    if not is_authorized(user_id):
+        await update.message.reply_text("Sorry, you're not authorized.")
+        return
+
+    args = context.args
+    if not args:
+        await update.message.reply_text(
+            "🔎 **Drill Into Campaign**\n\n"
+            "Usage: `/drill [campaign name or keyword]`\n\n"
+            "Examples:\n"
+            "• `/drill bath gel`\n"
+            "• `/drill PP | LM | SHOPIFY`\n"
+            "• `/drill anniversary`\n\n"
+            "I'll show you ad-level breakdown with metrics for each ad.",
+            parse_mode="Markdown",
+        )
+        return
+
+    search = " ".join(args).lower()
+    await update.message.reply_text(f"🔎 Looking for campaigns matching \"{search}\"...")
+
+    try:
+        all_ad_data = []
+        for acct_key, acct in AD_ACCOUNTS.items():
+            acct_id = acct["id"]
+            currency = acct.get("currency", "MYR")
+
+            # Get ads with insights
+            ads_url = f"https://graph.facebook.com/v21.0/{acct_id}/ads"
+            params = {
+                "access_token": META_ACCESS_TOKEN,
+                "fields": "name,status,campaign{name},adset{name},insights.date_preset(last_7d){spend,impressions,clicks,cpc,cpm,ctr,frequency,actions,action_values}",
+                "filtering": json.dumps([{"field": "campaign.name", "operator": "CONTAIN", "value": search}]),
+                "limit": 30,
+            }
+            resp = requests.get(ads_url, params=params, timeout=30)
+            data = resp.json()
+            ads = data.get("data", [])
+
+            for ad in ads:
+                ins_data = ad.get("insights", {}).get("data", [])
+                ins = ins_data[0] if ins_data else {}
+
+                purchases = 0
+                purchase_value = 0
+                for action in ins.get("actions", []):
+                    if action["action_type"] in ("purchase", "offsite_conversion.fb_pixel_purchase"):
+                        purchases = int(action.get("value", 0))
+                for av in ins.get("action_values", []):
+                    if av["action_type"] in ("purchase", "offsite_conversion.fb_pixel_purchase"):
+                        purchase_value = float(av.get("value", 0))
+
+                spend = float(ins.get("spend", 0))
+                all_ad_data.append({
+                    "account": acct["name"],
+                    "campaign": ad.get("campaign", {}).get("name", ""),
+                    "adset": ad.get("adset", {}).get("name", ""),
+                    "ad_name": ad.get("name", ""),
+                    "status": ad.get("status", ""),
+                    "spend": round(spend, 2),
+                    "impressions": int(ins.get("impressions", 0)),
+                    "clicks": int(ins.get("clicks", 0)),
+                    "cpc": round(float(ins.get("cpc", 0)), 2),
+                    "ctr": round(float(ins.get("ctr", 0)), 2),
+                    "purchases": purchases,
+                    "roas": round(purchase_value / spend, 2) if spend > 0 else 0,
+                })
+
+        if not all_ad_data:
+            await update.message.reply_text(f"📭 No ads found matching \"{search}\". Try a different keyword.")
+            return
+
+        # Sort by spend (highest first)
+        all_ad_data.sort(key=lambda x: x["spend"], reverse=True)
+
+        # Format results
+        result = f"🔎 **Ad Breakdown** (matching \"{search}\", last 7d)\n\n"
+        for ad in all_ad_data[:15]:
+            emoji = "🟢" if ad["roas"] >= 3 else "🟡" if ad["roas"] >= 1.5 else "🔴" if ad["spend"] > 50 else "👀"
+            result += (
+                f"{emoji} **{ad['ad_name']}**\n"
+                f"   Campaign: {ad['campaign']}\n"
+                f"   Spend: MYR {ad['spend']} | ROAS: {ad['roas']}x | CTR: {ad['ctr']}%\n"
+                f"   Clicks: {ad['clicks']} | CPC: MYR {ad['cpc']} | Purchases: {ad['purchases']}\n\n"
+            )
+
+        result += "🟢 = Scale | 🟡 = Improve | 🔴 = Kill | 👀 = Watch"
+
+        if len(result) > 4000:
+            parts = [result[i:i+4000] for i in range(0, len(result), 4000)]
+            for part in parts:
+                await update.message.reply_text(part, parse_mode="Markdown")
+        else:
+            await update.message.reply_text(result, parse_mode="Markdown")
+
+    except Exception as e:
+        logger.error(f"Drill failed: {e}")
+        await update.message.reply_text(f"❌ Error: {e}")
 
 
 # Store pending strategy suggestions per user
@@ -2805,6 +3309,10 @@ def main():
     app.add_handler(CommandHandler("feedback", cmd_feedback))
     app.add_handler(CommandHandler("memory", cmd_memory))
     app.add_handler(CommandHandler("forget", cmd_forget))
+    app.add_handler(CommandHandler("performance", cmd_performance))
+    app.add_handler(CommandHandler("report", cmd_performance))  # Alias
+    app.add_handler(CommandHandler("spy", cmd_spy))
+    app.add_handler(CommandHandler("drill", cmd_drill))
     app.add_handler(CallbackQueryHandler(handle_approval))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo_analysis))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_brief))
