@@ -56,7 +56,7 @@ META_PAGE_ID = os.getenv("META_PAGE_ID", "")
 META_IG_ACTOR_ID = os.getenv("META_IG_ACTOR_ID", "")
 MANUS_API_KEY = os.getenv("MANUS_API_KEY", "")
 TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY", "")  # For AI image generation
-META_PIXEL_ID = os.getenv("META_PIXEL_ID", "").strip()  # Facebook Pixel (needed for OUTCOME_SALES)
+META_PIXEL_ID = os.getenv("META_PIXEL_ID", "769767095050716").strip()  # Facebook Pixel — hardcoded fallback
 ALLOWED_USER_IDS = [int(x.strip()) for x in os.getenv("ALLOWED_USER_IDS", "").split(",") if x.strip()]
 
 # ─────────────────────────────────────────────
