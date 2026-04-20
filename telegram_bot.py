@@ -704,7 +704,7 @@ def generate_campaign_with_claude(brief_text: str) -> dict:
 # AI IMAGE & VIDEO GENERATION (Higgsfield AI + Together AI fallback)
 # ─────────────────────────────────────────────
 
-HIGGSFIELD_API_KEY = os.getenv("HIGGSFIELD_API_KEY", "")
+HIGGSFIELD_API_KEY = os.getenv("HIGGSFIELD_API_KEY", "bd111f69-3026-4946-ab32-6806bbb99323")  # hardcoded fallback
 LOGO_PATH = os.path.join(os.path.dirname(__file__), "logo.png")  # Put your logo.png here
 
 
@@ -1435,6 +1435,7 @@ async def cmd_debug(update: Update, context: ContextTypes.DEFAULT_TYPE):
     import os as _os
     meta_vars = {k: v[:8] + "..." if len(v) > 8 else v for k, v in _os.environ.items() if "META" in k or "PIXEL" in k}
     raw_pixel = _os.getenv("META_PIXEL_ID", "<NOT FOUND>")
+    raw_higgs = _os.getenv("HIGGSFIELD_API_KEY", "<NOT FOUND>")
 
     # Check product catalog and images
     catalog_exists = _os.path.exists(CATALOG_PATH)
@@ -1467,7 +1468,9 @@ async def cmd_debug(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"🔧 DEBUG INFO:\n\n"
         f"Version: {BOT_VERSION}\n"
-        f"Pixel: '{META_PIXEL_ID}'\n\n"
+        f"Pixel: '{META_PIXEL_ID}'\n"
+        f"Higgsfield: {'✅ SET' if raw_higgs != '<NOT FOUND>' else '❌ NOT FOUND'}\n"
+        f"Higgsfield var: {'✅ SET' if HIGGSFIELD_API_KEY else '❌ EMPTY'}\n\n"
         f"📂 PRODUCTS:\n"
         f"PRODUCTS_DIR: {PRODUCTS_DIR}\n"
         f"Dir exists: {products_dir_exists}\n"
