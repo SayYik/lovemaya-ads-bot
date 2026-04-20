@@ -1399,9 +1399,11 @@ def trigger_manus(instructions: str) -> dict:
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Welcome message."""
     user = update.effective_user
+    debug_pixel = "✅ SET" if META_PIXEL_ID else "❌ NOT SET"
     await update.message.reply_text(
         f"Hey {user.first_name}! 👋\n\n"
-        f"I'm the Lovemaya Ads Engine. Send me a brief and I'll create a full Meta campaign.\n\n"
+        f"I'm the Lovemaya Ads Engine {BOT_VERSION}\n"
+        f"Send me a brief and I'll create a full Meta campaign.\n\n"
         f"Example:\n"
         f"\"Bath gel, MYR10/day, women 18-45, Malaysia, traffic, shopify, in EN BM CN\"\n\n"
         f"📂 Ad Accounts:\n"
@@ -1411,10 +1413,15 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💰 Budget Types:\n"
         f"• \"CBO\" → Campaign budget (shared)\n"
         f"• \"ABO\" → Ad set budget (default)\n\n"
+        f"📊 Performance:\n"
+        f"/performance — SCALE/IMPROVE/KILL analysis\n"
+        f"/spy [brand] — Competitor ad research\n"
+        f"/drill [keyword] — Campaign deep-dive\n\n"
         f"Commands:\n"
         f"/start — This message\n"
         f"/status [campaign_id] — Check campaign status\n"
-        f"/help — Tips for writing briefs"
+        f"/help — Tips for writing briefs\n\n"
+        f"🔧 Pixel: {debug_pixel} | Version: {BOT_VERSION}"
     )
 
 
