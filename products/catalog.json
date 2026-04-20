@@ -1,0 +1,124 @@
+{
+  "_instructions": "Product catalog for Love Maya. The bot matches keywords from your brief to find the right product and show its images. To add new images: drop them in this products/ folder and add the filename to the right product's images list below.",
+  "products": [
+    {
+      "id": "bath_gel",
+      "name": "Bath Gel",
+      "taxonomy_code": "BATH GEL",
+      "keywords": ["bath gel", "shower gel", "body wash"],
+      "images": [
+        "LM_BG_Ocean_Shadow.png",
+        "LM_BG_WildRose_Background.png",
+        "Copy of LOVEMAYA-20252614-withshadow.png",
+        "Copy of LOVEMAYA-20252617(withshadow).png",
+        "Copy of LOVEMAYA-20252628-withshadow.png",
+        "Copy of Copy of 250513 - Love Maya D3 7.jpg",
+        "SL Love Maya-5 (new shadow).png",
+        "SL Love Maya-6 (new shadow).png",
+        "SL Love Maya-8 (new shadow).png"
+      ],
+      "variants": {
+        "ocean": ["LM_BG_Ocean_Shadow.png"],
+        "wild rose": ["LM_BG_WildRose_Background.png"],
+        "sunrise": ["Copy of LOVEMAYA-20252614-withshadow.png"],
+        "amberlight": ["Copy of LOVEMAYA-20252617(withshadow).png"],
+        "morning zest": ["Copy of LOVEMAYA-20252628-withshadow.png"],
+        "petals": ["Copy of Copy of 250513 - Love Maya D3 7.jpg"],
+        "cedar rain": ["SL Love Maya-5 (new shadow).png"],
+        "wood sage": ["SL Love Maya-6 (new shadow).png"],
+        "earth": ["SL Love Maya-8 (new shadow).png"]
+      },
+      "description": "Love Maya Bath Gel"
+    },
+    {
+      "id": "body_lotion",
+      "name": "Body Lotion",
+      "taxonomy_code": "BODY LOTION",
+      "keywords": ["body lotion", "lotion", "moisturizer", "moisturiser"],
+      "images": [
+        "LM_BL_Ocean_WithBackground.png",
+        "Copy of LOVEMAYA-20252625-withoutshadow.png",
+        "SL Love Maya-7 (new shadow).png"
+      ],
+      "variants": {
+        "ocean": ["LM_BL_Ocean_WithBackground.png"],
+        "geranium": ["Copy of LOVEMAYA-20252625-withoutshadow.png"],
+        "earth": ["SL Love Maya-7 (new shadow).png"]
+      },
+      "description": "Love Maya Body Lotion"
+    },
+    {
+      "id": "hand_cream",
+      "name": "Hand Cream",
+      "taxonomy_code": "HAND CREAM",
+      "keywords": ["hand cream", "hand lotion", "hand care"],
+      "images": [
+        "Copy of Copy of LOVE MAYA12630.jpg",
+        "Copy of LOVE MAYA12629.jpg",
+        "Copy of LOVE MAYA12635.jpg"
+      ],
+      "variants": {
+        "earth": ["Copy of Copy of LOVE MAYA12630.jpg"],
+        "geranium": ["Copy of LOVE MAYA12629.jpg"],
+        "ocean": ["Copy of LOVE MAYA12635.jpg"]
+      },
+      "description": "Love Maya Hand Cream"
+    },
+    {
+      "id": "perfume",
+      "name": "Perfume",
+      "taxonomy_code": "PERFUME",
+      "keywords": ["perfume", "eau de", "fragrance", "scent", "parfum"],
+      "images": [
+        "LM PERFUME 20265869 (1).png",
+        "LM PERFUME 20265871 (1).png",
+        "LM PERFUME 20265888 (1).png"
+      ],
+      "variants": {
+        "wood sage": ["LM PERFUME 20265869 (1).png"],
+        "ocean": ["LM PERFUME 20265871 (1).png"],
+        "earth": ["LM PERFUME 20265888 (1).png"]
+      },
+      "description": "Love Maya Perfume"
+    },
+    {
+      "id": "bundle",
+      "name": "Bundle / Gift Set",
+      "taxonomy_code": "BUNDLE",
+      "keywords": ["bundle", "gift set", "combo", "set", "package", "group buy", "travel set", "pouch"],
+      "images": ["1O1A6790 E.jpg"],
+      "variants": {},
+      "description": "Love Maya Bundle / Gift Set"
+    },
+    {
+      "id": "body_mist",
+      "name": "Body Mist",
+      "taxonomy_code": "BODY MIST",
+      "keywords": ["body mist", "mist", "fragrance mist", "body spray"],
+      "images": [],
+      "variants": {},
+      "description": "Love Maya Body Mist (add images to products/ folder)"
+    },
+    {
+      "id": "body_scrub",
+      "name": "Body Scrub",
+      "taxonomy_code": "BODY SCRUB",
+      "keywords": ["body scrub", "scrub", "exfoliant"],
+      "images": [],
+      "variants": {},
+      "description": "Love Maya Body Scrub (add images to products/ folder)"
+    },
+    {
+      "id": "hair_shampoo",
+      "name": "Hair Shampoo",
+      "taxonomy_code": "HAIR SHAMPOO",
+      "keywords": ["shampoo", "hair shampoo", "hair wash"],
+      "images": [],
+      "variants": {},
+      "description": "Love Maya Hair Shampoo (add images to products/ folder)"
+    },
+    {
+      "id": "mixed_series",
+      "name": "Mixed / All Products",
+      "taxonomy_code": "MIXED SERIES",
+      "keywords": ["mixed", "mixed
