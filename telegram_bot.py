@@ -205,8 +205,28 @@ def detect_product(text: str) -> list:
     return matches
 
 
-def get_product_images(product: dict) -> list:
-    """Get available image file paths for a product (only files that actually exist)."""
+def get_product_images(product: dict, brief_text: str = "") -> list:
+    """
+    Get available image file paths for a product (only files that actually exist).
+    If brief mentions a specific variant (e.g. 'ocean', 'wild rose'), show only that variant's images.
+    Otherwise show all images for the product.
+    """
+    # Check if brief mentions a specific variant
+    variants = product.get("variants", {})
+    if brief_text and variants:
+        brief_lower = brief_text.lower()
+        for variant_name, variant_images in variants.items():
+            if variant_name in brief_lower:
+                available = []
+                for img_name in variant_images:
+                    img_path = os.path.join(PRODUCTS_DIR, img_name)
+                    if os.path.exists(img_path):
+                        available.append(img_path)
+                if available:
+                    logger.info(f"Variant matched: {variant_name} ({len(available)} images)")
+                    return available
+
+    # No variant match — return all product images
     available = []
     for img_name in product.get("images", []):
         img_path = os.path.join(PRODUCTS_DIR, img_name)
@@ -1908,7 +1928,7 @@ async def handle_brief(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Product was selected via picker — enrich brief with product info
             selected = stored["selected_product"]
             brief_text = stored["brief"]
-            product_images = get_product_images(selected)
+            product_images = get_product_images(selected, brief_text)
             # Tag the brief with product info so Claude and the image flow know
             brief_text += f"\n[PRODUCT: {selected['name']} | CODE: {selected['taxonomy_code']}]"
             # Store product images for later use
@@ -1922,7 +1942,7 @@ async def handle_brief(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # If product was detected from brief text, store it
     if matched_products and "selected_product" not in context.user_data:
         best_match = matched_products[0]
-        product_images = get_product_images(best_match)
+        product_images = get_product_images(best_match, brief_text)
         context.user_data["selected_product"] = best_match
         context.user_data["product_images"] = product_images
         logger.info(f"Product auto-detected: {best_match['name']} ({len(product_images)} images available)")
@@ -2206,7 +2226,7 @@ async def handle_approval(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Store selection and re-trigger the brief handler
         pending_product_selection[user_id]["selected_product"] = selected
-        product_images = get_product_images(selected)
+        product_images = get_product_images(selected, stored["brief"])
         img_count = len(product_images)
 
         await query.edit_message_text(
