@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-BOT_VERSION = "v5.6"  # Change this to verify Railway deploys the latest file
+BOT_VERSION = "v5.7"  # Change this to verify Railway deploys the latest file
 """
 Lovemaya Meta Ads Bot
 ======================
@@ -2117,7 +2117,51 @@ async def handle_approval(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ],
             ]
             await query.message.reply_text(preview_text)
-            await query.message.reply_text("What should I do?", reply_markup=InlineKeyboardMarkup(keyboard))
+
+            # Step: Generate AI images (if API keys configured)
+            image_prompts = campaign.get("image_prompts", [])
+            if not image_prompts and campaign.get("image_prompt"):
+                image_prompts = [campaign["image_prompt"]]
+
+            if (HIGGSFIELD_API_KEY or TOGETHER_API_KEY) and image_prompts:
+                await query.message.reply_text("🎨 Generating ad images... (this takes ~30 seconds)")
+
+                generated_paths = generate_multiple_images(image_prompts[:3])
+                valid_images = [(i, p) for i, p in enumerate(generated_paths) if p]
+
+                if valid_images:
+                    pending_images[user_id] = {
+                        "paths": generated_paths,
+                        "prompts": image_prompts,
+                    }
+
+                    for idx, path in valid_images:
+                        try:
+                            with open(path, "rb") as photo:
+                                await query.message.reply_photo(
+                                    photo=photo,
+                                    caption=f"🖼 Option {idx + 1}: {image_prompts[idx][:150]}...",
+                                    reply_markup=InlineKeyboardMarkup([[
+                                        InlineKeyboardButton(f"✅ Use Image {idx + 1}", callback_data=f"pick_img_{idx}"),
+                                    ]]),
+                                )
+                        except Exception as img_err:
+                            logger.error(f"Failed to send image {idx}: {img_err}")
+
+                    await query.message.reply_text(
+                        "👆 Pick an image above, or choose an action:",
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("🚀 Create without image", callback_data="exec_api")],
+                            [InlineKeyboardButton("❌ Cancel", callback_data="exec_cancel")],
+                        ]),
+                    )
+                else:
+                    await query.message.reply_text(
+                        "⚠️ Image generation failed. You can still create the campaign:",
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                    )
+            else:
+                await query.message.reply_text("What should I do?", reply_markup=InlineKeyboardMarkup(keyboard))
 
         except Exception as e:
             await query.message.reply_text(f"❌ Error generating campaign: {e}")
