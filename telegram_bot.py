@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-BOT_VERSION = "v5.2"  # Change this to verify Railway deploys the latest file
+BOT_VERSION = "v5.3"  # Change this to verify Railway deploys the latest file
 """
 Lovemaya Meta Ads Bot
 ======================
@@ -56,7 +56,7 @@ META_PAGE_ID = os.getenv("META_PAGE_ID", "")
 META_IG_ACTOR_ID = os.getenv("META_IG_ACTOR_ID", "")
 MANUS_API_KEY = os.getenv("MANUS_API_KEY", "")
 TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY", "")  # For AI image generation
-META_PIXEL_ID = os.getenv("META_PIXEL_ID", "")  # Facebook Pixel (needed for OUTCOME_SALES)
+META_PIXEL_ID = os.getenv("META_PIXEL_ID", "").strip()  # Facebook Pixel (needed for OUTCOME_SALES)
 ALLOWED_USER_IDS = [int(x.strip()) for x in os.getenv("ALLOWED_USER_IDS", "").split(",") if x.strip()]
 
 # ─────────────────────────────────────────────
@@ -1880,9 +1880,11 @@ def main():
         return
 
     print("=" * 50)
-    print("  LOVEMAYA ADS BOT — Starting")
-    print(f"  Meta API: {'Configured' if META_ACCESS_TOKEN else 'Not configured (manual mode)'}")
-    print(f"  Manus API: {'Configured' if MANUS_API_KEY else 'Not configured (copy mode)'}")
+    print(f"  LOVEMAYA ADS BOT {BOT_VERSION} — Starting")
+    print(f"  Meta API: {'Configured' if META_ACCESS_TOKEN else 'Not configured'}")
+    print(f"  Pixel ID: {META_PIXEL_ID if META_PIXEL_ID else 'NOT SET — Sales campaigns will downgrade to Traffic'}")
+    print(f"  Page ID: {META_PAGE_ID if META_PAGE_ID else 'Will auto-detect'}")
+    print(f"  IG Actor: {META_IG_ACTOR_ID if META_IG_ACTOR_ID else 'Will auto-detect'}")
     print(f"  Allowed users: {ALLOWED_USER_IDS or 'All (no restriction)'}")
     print("=" * 50)
 
