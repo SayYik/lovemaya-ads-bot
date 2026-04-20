@@ -187,15 +187,49 @@ def find_image(img_name: str) -> str | None:
     return None
 
 
+FALLBACK_CATALOG = [
+    {"id":"bath_gel","name":"Bath Gel","taxonomy_code":"BATH GEL","keywords":["bath gel","shower gel","body wash"],
+     "images":["LM_BG_Ocean_Shadow.png","LM_BG_WildRose_Background.png","Copy of LOVEMAYA-20252614-withshadow.png","Copy of LOVEMAYA-20252617(withshadow).png","Copy of LOVEMAYA-20252628-withshadow.png","Copy of Copy of 250513 - Love Maya D3 7.jpg","SL Love Maya-5 (new shadow).png","SL Love Maya-6 (new shadow).png","SL Love Maya-8 (new shadow).png"],
+     "variants":{"ocean":["LM_BG_Ocean_Shadow.png"],"wild rose":["LM_BG_WildRose_Background.png"],"sunrise":["Copy of LOVEMAYA-20252614-withshadow.png"],"amberlight":["Copy of LOVEMAYA-20252617(withshadow).png"],"morning zest":["Copy of LOVEMAYA-20252628-withshadow.png"],"petals":["Copy of Copy of 250513 - Love Maya D3 7.jpg"],"cedar rain":["SL Love Maya-5 (new shadow).png"],"wood sage":["SL Love Maya-6 (new shadow).png"],"earth":["SL Love Maya-8 (new shadow).png"]},
+     "description":"Love Maya Bath Gel — Niacinamide & Hyaluronic Acid, 400ML"},
+    {"id":"body_lotion","name":"Body Lotion","taxonomy_code":"BODY LOTION","keywords":["body lotion","lotion","moisturizer","moisturiser"],
+     "images":["LM_BL_Ocean_WithBackground.png","Copy of LOVEMAYA-20252625-withoutshadow.png","SL Love Maya-7 (new shadow).png"],
+     "variants":{"ocean":["LM_BL_Ocean_WithBackground.png"],"geranium":["Copy of LOVEMAYA-20252625-withoutshadow.png"],"earth":["SL Love Maya-7 (new shadow).png"]},
+     "description":"Love Maya Body Lotion — Aloe Vera & Ceramide, 400ML"},
+    {"id":"hand_cream","name":"Hand Cream","taxonomy_code":"HAND CREAM","keywords":["hand cream","hand lotion","hand care"],
+     "images":["Copy of Copy of LOVE MAYA12630.jpg","Copy of LOVE MAYA12629.jpg","Copy of LOVE MAYA12635.jpg"],
+     "variants":{"earth":["Copy of Copy of LOVE MAYA12630.jpg"],"geranium":["Copy of LOVE MAYA12629.jpg"],"ocean":["Copy of LOVE MAYA12635.jpg"]},
+     "description":"Love Maya Hand Cream — 30ML travel size"},
+    {"id":"perfume","name":"Perfume","taxonomy_code":"PERFUME","keywords":["perfume","eau de","fragrance","scent","parfum"],
+     "images":["LM PERFUME 20265869 (1).png","LM PERFUME 20265871 (1).png","LM PERFUME 20265888 (1).png"],
+     "variants":{"wood sage":["LM PERFUME 20265869 (1).png"],"ocean":["LM PERFUME 20265871 (1).png"],"earth":["LM PERFUME 20265888 (1).png"]},
+     "description":"Love Maya Eau de Parfum — signature scent collection"},
+    {"id":"bundle","name":"Bundle / Gift Set","taxonomy_code":"BUNDLE","keywords":["bundle","gift set","combo","set","package","group buy","travel set","pouch"],
+     "images":["1O1A6790 E.jpg"],"variants":{},"description":"Love Maya Bundle / Gift Set"},
+    {"id":"body_mist","name":"Body Mist","taxonomy_code":"BODY MIST","keywords":["body mist","mist","fragrance mist","body spray"],
+     "images":[],"variants":{},"description":"Love Maya Body Mist"},
+    {"id":"body_scrub","name":"Body Scrub","taxonomy_code":"BODY SCRUB","keywords":["body scrub","scrub","exfoliant","exfoliator"],
+     "images":[],"variants":{},"description":"Love Maya Body Scrub"},
+    {"id":"hair_shampoo","name":"Hair Shampoo","taxonomy_code":"HAIR SHAMPOO","keywords":["shampoo","hair shampoo","hair wash","hair care"],
+     "images":[],"variants":{},"description":"Love Maya Hair Shampoo"},
+    {"id":"mixed_series","name":"Mixed / All Products","taxonomy_code":"MIXED SERIES","keywords":["mixed","mixed series","all products","multi product"],
+     "images":["1O1A6790 E.jpg"],"variants":{},"description":"Love Maya multiple products"},
+]
+
+
 def load_product_catalog() -> list:
-    """Load product catalog from JSON file."""
+    """Load product catalog from JSON file, with hardcoded fallback."""
     try:
         with open(CATALOG_PATH, "r") as f:
             data = json.load(f)
-        return data.get("products", [])
+        products = data.get("products", [])
+        if products:
+            return products
     except Exception as e:
         logger.warning(f"Could not load product catalog: {e}")
-        return []
+    # Fallback to hardcoded catalog
+    logger.info("Using fallback product catalog")
+    return FALLBACK_CATALOG
 
 
 def detect_product(text: str) -> list:
