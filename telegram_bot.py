@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-BOT_VERSION = "v5.5"  # Change this to verify Railway deploys the latest file
+BOT_VERSION = "v5.6"  # Change this to verify Railway deploys the latest file
 """
 Lovemaya Meta Ads Bot
 ======================
@@ -1752,8 +1752,46 @@ async def cmd_forget(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🗑 All memories cleared. Starting fresh!")
 
 
+# Store pending strategy suggestions per user
+pending_strategies = {}
+
+STRATEGY_PROMPT = """You are a DTC performance marketing strategist for Lovemaya (Malaysian body care brand).
+
+The user wants to create a campaign. Based on their brief, suggest a complete campaign strategy.
+
+USER BRIEF: {brief}
+
+BRAND LEARNINGS (from past research):
+{learnings}
+
+Based on the brief, suggest a strategy using Lovemaya's taxonomy system. Return VALID JSON ONLY (no markdown):
+
+{{
+  "strategy_summary": "1-2 sentence summary of what you recommend and why",
+  "funnel": "PP or RT — with reason",
+  "destination": "SHOPIFY, SHOPEE, RETAIL, or OTH — with reason",
+  "biz_objective": "BAU or CAMPAIGN — with reason",
+  "campaign_objective": "AWA/TRF/EGM/LEADS/SAL — with reason",
+  "product_category": "BATH GEL/BODY LOTION/BODY MIST/BODY SCRUB/BUNDLE/etc.",
+  "audience_suggestion": "describe the ideal target audience and why",
+  "audience_setup": "A+ or ORI — with reason",
+  "placement": "A+ or Manual — with reason",
+  "suggested_angles": [
+    {{"code": "DISCOUNT", "reason": "why this angle works for this brief"}},
+    {{"code": "REVIEW", "reason": "why this angle works"}},
+    {{"code": "FOMO", "reason": "why this angle works"}}
+  ],
+  "ad_format": "STA/VID/CAR/CLN — with reason",
+  "budget_suggestion": "suggest daily budget in MYR with reasoning",
+  "key_insight": "one powerful insight from brand learnings that applies here"
+}}
+
+Pick 3 angles that would work best. Reference specific brand learnings if relevant.
+Today's date: {today}"""
+
+
 async def handle_brief(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Main handler — receives brief, generates campaign, asks for approval."""
+    """Main handler — receives brief, suggests strategy, then generates campaign."""
     user_id = update.effective_user.id
 
     if not is_authorized(user_id):
@@ -1763,6 +1801,82 @@ async def handle_brief(update: Update, context: ContextTypes.DEFAULT_TYPE):
     brief_text = update.message.text
     logger.info(f"Brief received from {user_id}: {brief_text[:100]}...")
 
+    # Check if this is a response to skip strategy (user typed "skip" or similar)
+    if brief_text.lower().strip() in ["skip", "just create", "go ahead", "proceed"]:
+        if user_id in pending_strategies:
+            # User wants to skip strategy and go straight to generation
+            brief_text = pending_strategies[user_id]["original_brief"]
+            del pending_strategies[user_id]
+            # Fall through to campaign generation below
+        else:
+            pass  # Normal brief, continue
+
+    # Step 0: Generate strategy suggestion first (unless brief is very detailed)
+    brief_lower = brief_text.lower()
+    is_detailed = len(brief_text) > 200 or "|" in brief_text  # Already has taxonomy codes
+    has_pending = user_id in pending_strategies
+
+    if not is_detailed and not has_pending:
+        await update.message.reply_text("🧠 Analyzing your brief...")
+
+        try:
+            client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
+            memories = load_memory()
+            learnings_text = "\n".join([m.get("text", "")[:200] for m in memories[-10:]]) if memories else "No brand learnings yet."
+            today = datetime.now().strftime("%B %d, %Y")
+
+            strategy_msg = client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=1500,
+                messages=[{"role": "user", "content": STRATEGY_PROMPT.format(
+                    brief=brief_text, learnings=learnings_text, today=today
+                )}]
+            )
+
+            strategy_text = strategy_msg.content[0].text.strip()
+            strategy = json.loads(strategy_text)
+
+            # Store strategy and original brief
+            pending_strategies[user_id] = {
+                "strategy": strategy,
+                "original_brief": brief_text,
+            }
+
+            # Format strategy suggestion
+            angles_text = ""
+            for a in strategy.get("suggested_angles", []):
+                angles_text += f"\n  • {a['code']} — {a['reason']}"
+
+            suggestion = (
+                f"💡 Strategy Suggestion:\n\n"
+                f"{strategy.get('strategy_summary', '')}\n\n"
+                f"📊 Recommended Setup:\n"
+                f"  Funnel: {strategy.get('funnel', '?')}\n"
+                f"  Objective: {strategy.get('campaign_objective', '?')}\n"
+                f"  Product: {strategy.get('product_category', '?')}\n"
+                f"  Audience: {strategy.get('audience_suggestion', '?')}\n"
+                f"  Audience Setup: {strategy.get('audience_setup', '?')}\n"
+                f"  Placement: {strategy.get('placement', '?')}\n"
+                f"  Format: {strategy.get('ad_format', '?')}\n"
+                f"  Budget: {strategy.get('budget_suggestion', '?')}\n\n"
+                f"🎯 Suggested Angles:{angles_text}\n\n"
+                f"💎 Key Insight: {strategy.get('key_insight', 'N/A')}"
+            )
+
+            keyboard = [
+                [InlineKeyboardButton("✅ Approve & Create", callback_data="strategy_approve")],
+                [InlineKeyboardButton("✏️ Let me adjust my brief", callback_data="strategy_adjust")],
+                [InlineKeyboardButton("⏩ Skip suggestions next time", callback_data="strategy_skip")],
+            ]
+
+            await update.message.reply_text(suggestion, reply_markup=InlineKeyboardMarkup(keyboard))
+            return  # Wait for user to approve
+
+        except (json.JSONDecodeError, Exception) as e:
+            logger.warning(f"Strategy suggestion failed, proceeding directly: {e}")
+            # Fall through to direct campaign generation
+
+    # If user approved strategy or brief is detailed enough, generate campaign directly
     # Step 1: Detect ad account, budget type, and audience type from brief
     detected_account = detect_ad_account(brief_text)
     budget_type = detect_budget_type(brief_text)
@@ -1916,12 +2030,149 @@ async def handle_brief(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_approval(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle button clicks for campaign approval."""
+    """Handle button clicks for campaign approval and strategy suggestions."""
     query = update.callback_query
     await query.answer()
 
     user_id = query.from_user.id
     action = query.data
+
+    # ── STRATEGY SUGGESTION CALLBACKS ──
+    if action == "strategy_approve":
+        strategy_data = pending_strategies.get(user_id)
+        if not strategy_data:
+            await query.edit_message_text("⚠️ Strategy expired. Send your brief again.")
+            return
+        original_brief = strategy_data["original_brief"]
+        strategy = strategy_data["strategy"]
+        del pending_strategies[user_id]
+
+        # Enrich the brief with strategy suggestions before generating
+        enriched_brief = (
+            f"{original_brief}\n\n"
+            f"[STRATEGY APPROVED — use these settings]\n"
+            f"Funnel: {strategy.get('funnel', 'PP').split(' ')[0]}\n"
+            f"Campaign Objective: {strategy.get('campaign_objective', 'SAL').split(' ')[0]}\n"
+            f"Product: {strategy.get('product_category', '')}\n"
+            f"Audience: {strategy.get('audience_suggestion', '')}\n"
+            f"Audience Setup: {strategy.get('audience_setup', 'A+').split(' ')[0]}\n"
+            f"Placement: {strategy.get('placement', 'A+').split(' ')[0]}\n"
+            f"Ad Format: {strategy.get('ad_format', 'STA').split(' ')[0]}\n"
+            f"Angles: {', '.join([a['code'] for a in strategy.get('suggested_angles', [])])}\n"
+            f"Budget: {strategy.get('budget_suggestion', 'MYR 30/day')}"
+        )
+
+        await query.edit_message_text("✅ Strategy approved! Generating campaign...")
+
+        # Now generate campaign with enriched brief
+        try:
+            detected_account = detect_ad_account(original_brief)
+            budget_type = detect_budget_type(original_brief)
+            audience_type = detect_audience_type(original_brief)
+
+            campaign = generate_campaign_with_claude(enriched_brief)
+            logger.info(f"Campaign generated from strategy: {campaign.get('campaign_name')}")
+
+            account_key = campaign.get("ad_account", DEFAULT_AD_ACCOUNT)
+            if account_key in AD_ACCOUNTS:
+                campaign["_ad_account"] = AD_ACCOUNTS[account_key]
+            else:
+                campaign["_ad_account"] = detected_account
+            campaign["_budget_type"] = budget_type
+            campaign["_audience_type"] = audience_type
+
+            pending_campaigns[user_id] = campaign
+
+            # Build preview
+            variants_preview = ""
+            for v in campaign.get("ad_variants", []):
+                ad_name = v.get("name", "")
+                if ad_name and "|" in ad_name:
+                    variants_preview += f"\n• {ad_name}\n  → {v.get('primary_text', '')}"
+                else:
+                    lang = v.get("language", "")
+                    variants_preview += f"\n• [{v.get('angle', '')} ({lang})] {v.get('primary_text', '')}"
+
+            acct = campaign.get("_ad_account", detected_account)
+            adset_name = campaign.get('adset', {}).get('name', 'Ad Set')
+            preview_text = (
+                f"✅ Campaign Ready!\n\n"
+                f"📂 Account: {acct['name']}\n"
+                f"📋 Campaign: {campaign.get('campaign_name', 'Campaign')}\n"
+                f"📁 Ad Set: {adset_name}\n"
+                f"🎯 {campaign.get('objective', 'TRAFFIC')}\n"
+                f"💰 {acct.get('currency', 'MYR')} {campaign.get('adset', {}).get('daily_budget', '?')} (cents)/day\n\n"
+                f"📝 Ads:{variants_preview}\n\n"
+                f"🛡 Policy: {campaign.get('policy_check', 'No issues')}"
+            )
+
+            keyboard = [
+                [
+                    InlineKeyboardButton("🚀 Create via API", callback_data="exec_api"),
+                    InlineKeyboardButton("🤖 Send to Manus", callback_data="exec_manus"),
+                ],
+                [
+                    InlineKeyboardButton("📋 Copy Instructions", callback_data="exec_copy"),
+                    InlineKeyboardButton("❌ Cancel", callback_data="exec_cancel"),
+                ],
+            ]
+            await query.message.reply_text(preview_text)
+            await query.message.reply_text("What should I do?", reply_markup=InlineKeyboardMarkup(keyboard))
+
+        except Exception as e:
+            await query.message.reply_text(f"❌ Error generating campaign: {e}")
+        return
+
+    elif action == "strategy_adjust":
+        await query.edit_message_text(
+            "✏️ No problem! Send me an updated brief with more details.\n\n"
+            "You can include specifics like:\n"
+            "• Product: bath gel / body mist / bundle\n"
+            "• Angle: discount / FOMO / review\n"
+            "• Audience: women 25-45 / retarget past buyers\n"
+            "• Budget: MYR 50/day\n"
+            "• Language: EN, BM, CHI"
+        )
+        if user_id in pending_strategies:
+            del pending_strategies[user_id]
+        return
+
+    elif action == "strategy_skip":
+        if user_id in pending_strategies:
+            original_brief = pending_strategies[user_id]["original_brief"]
+            del pending_strategies[user_id]
+            await query.edit_message_text("⏩ Skipping suggestions, generating campaign directly...")
+            # Re-trigger handle_brief with the original message
+            # Store a flag so it skips strategy next time
+            context.user_data["skip_strategy"] = True
+            # Create a fake message-like flow by directly generating
+            detected_account = detect_ad_account(original_brief)
+            campaign = generate_campaign_with_claude(original_brief)
+            account_key = campaign.get("ad_account", DEFAULT_AD_ACCOUNT)
+            if account_key in AD_ACCOUNTS:
+                campaign["_ad_account"] = AD_ACCOUNTS[account_key]
+            else:
+                campaign["_ad_account"] = detected_account
+            campaign["_budget_type"] = "CBO"
+            campaign["_audience_type"] = detect_audience_type(original_brief)
+            pending_campaigns[user_id] = campaign
+
+            adset_name = campaign.get('adset', {}).get('name', 'Ad Set')
+            acct = campaign["_ad_account"]
+            await query.message.reply_text(
+                f"✅ Campaign Ready!\n\n"
+                f"📋 Campaign: {campaign.get('campaign_name', 'Campaign')}\n"
+                f"📁 Ad Set: {adset_name}\n"
+                f"🎯 {campaign.get('objective', 'TRAFFIC')}"
+            )
+            keyboard = [
+                [InlineKeyboardButton("🚀 Create via API", callback_data="exec_api")],
+                [InlineKeyboardButton("❌ Cancel", callback_data="exec_cancel")],
+            ]
+            await query.message.reply_text("What should I do?", reply_markup=InlineKeyboardMarkup(keyboard))
+        return
+
+    # ── EXISTING CAMPAIGN CALLBACKS ──
     campaign = pending_campaigns.get(user_id)
 
     if not campaign and not action.startswith("pick_img_"):
