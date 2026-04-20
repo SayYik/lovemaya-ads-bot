@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-BOT_VERSION = "v4.7"  # Change this to verify Railway deploys the latest file
+BOT_VERSION = "v4.8"  # Change this to verify Railway deploys the latest file
 """
 Lovemaya Meta Ads Bot
 ======================
@@ -740,12 +740,13 @@ class MetaAdsExecutor:
         self.account_id = ad_account_id or AD_ACCOUNTS[DEFAULT_AD_ACCOUNT]["id"]
         self.page_id = META_PAGE_ID
         self.ig_actor_id = META_IG_ACTOR_ID
-        self.base_url = "https://graph.facebook.com/v25.0"
+        self.base_url = "https://graph.facebook.com/v21.0"
 
     def _post(self, endpoint, data):
         data["access_token"] = self.token
-        # Force lowest cost bid strategy (no bid cap needed) and remove bid_amount/bid_cap
-        if "campaigns" in endpoint or "adsets" in endpoint:
+        # Only set bid_strategy on AD SETS, never on campaigns
+        # (campaign-level bid_strategy confuses Meta for ABO campaigns)
+        if "adsets" in endpoint:
             data["bid_strategy"] = "LOWEST_COST_WITHOUT_CAP"
             data.pop("bid_amount", None)
             data.pop("bid_cap", None)
