@@ -772,6 +772,8 @@ def generate_image_higgsfield(prompt: str, index: int = 0) -> str | None:
             },
             timeout=30,
         )
+        logger.info(f"Higgsfield response status: {resp.status_code}")
+        logger.info(f"Higgsfield response body: {resp.text[:500]}")
         data = resp.json()
         gen_id = data.get("id") or data.get("generation_id")
         if not gen_id:
@@ -1429,6 +1431,35 @@ def trigger_manus(instructions: str) -> dict:
 # ─────────────────────────────────────────────
 # TELEGRAM HANDLERS
 # ─────────────────────────────────────────────
+
+async def cmd_testimg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Quick test of Higgsfield image generation."""
+    await update.message.reply_text("🧪 Testing Higgsfield API...")
+    try:
+        resp = requests.post(
+            "https://api.higgsfield.ai/v1/generations",
+            headers={
+                "Authorization": f"Bearer {HIGGSFIELD_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "task": "text-to-image",
+                "model": "flux",
+                "prompt": "A luxury bath gel bottle on white background, product photography",
+                "width": 1080,
+                "height": 1080,
+                "steps": 30,
+            },
+            timeout=30,
+        )
+        await update.message.reply_text(
+            f"🧪 Higgsfield Test Result:\n\n"
+            f"Status code: {resp.status_code}\n"
+            f"Response: {resp.text[:500]}"
+        )
+    except Exception as e:
+        await update.message.reply_text(f"🧪 Higgsfield Error: {e}")
+
 
 async def cmd_debug(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Debug env vars and product catalog."""
@@ -3427,6 +3458,7 @@ def main():
     # Register handlers
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("debug", cmd_debug))
+    app.add_handler(CommandHandler("testimg", cmd_testimg))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("ideas", cmd_ideas))
