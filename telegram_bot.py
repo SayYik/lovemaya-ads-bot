@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-BOT_VERSION = "v5.0"  # Change this to verify Railway deploys the latest file
+BOT_VERSION = "v5.1"  # Change this to verify Railway deploys the latest file
 """
 Lovemaya Meta Ads Bot
 ======================
@@ -872,7 +872,9 @@ class MetaAdsExecutor:
 
             # ── 1. CREATE CAMPAIGN ──
             results["failed_step"] = "1-campaign"
-            budget_type = campaign.get("_budget_type", "ABO")
+            # ALWAYS use CBO — Meta requires is_adset_budget_sharing_enabled for ABO
+            # which causes errors. CBO avoids this entirely and performs better.
+            budget_type = "CBO"
             adset = campaign.get("adset", {})
             daily_budget = adset.get("daily_budget", 200000)
             daily_budget = str(int(float(str(daily_budget).replace(",", "").replace(".", ""))))
@@ -885,20 +887,16 @@ class MetaAdsExecutor:
                 results["warnings"].append("⚠️ No Facebook Pixel → changed Sales to Traffic. Add META_PIXEL_ID in Railway for Sales.")
 
             results["debug_resolved_objective"] = objective
-            logger.info(f"Step 1: Creating campaign... (Budget type: {budget_type}, Objective: {objective})")
+            logger.info(f"Step 1: Creating campaign... (Budget type: CBO, Objective: {objective})")
             campaign_data = {
                 "name": campaign["campaign_name"],
                 "objective": objective,
                 "status": "PAUSED",
                 "special_ad_categories": json.dumps([]),
+                "daily_budget": daily_budget,
+                "is_campaign_budget_optimization_on": "true",
             }
-
-            if budget_type == "CBO":
-                campaign_data["daily_budget"] = daily_budget
-                campaign_data["is_campaign_budget_optimization_on"] = "true"
-                logger.info(f"CBO mode: daily_budget {daily_budget} set on campaign")
-            else:
-                logger.info("ABO mode: budget will be on ad set")
+            logger.info(f"CBO mode: daily_budget {daily_budget} on campaign, Meta distributes to ad sets")
 
             logger.info(f"Campaign POST data: {json.dumps({k:v for k,v in campaign_data.items()})}")
             camp_result = self._post(f"{self.account_id}/campaigns", campaign_data)
@@ -1041,13 +1039,8 @@ class MetaAdsExecutor:
             if config.get("promoted_object"):
                 adset_data["promoted_object"] = json.dumps(config["promoted_object"])
 
-            # Budget and budget sharing — MUST be set for ABO
-            if budget_type == "CBO":
-                logger.info("CBO mode: no budget on ad set")
-            else:
-                adset_data["daily_budget"] = daily_budget
-                adset_data["is_adset_budget_sharing_enabled"] = "False"
-                logger.info(f"ABO mode: daily_budget {daily_budget}, budget_sharing=False")
+            # CBO: budget is on the campaign, not the ad set
+            logger.info("CBO mode: no budget on ad set (campaign controls budget)")
 
             logger.info(f"Adset POST data keys: {list(adset_data.keys())}")
             adset_result = self._post(f"{self.account_id}/adsets", adset_data)
