@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-BOT_VERSION = "v4.9"  # Change this to verify Railway deploys the latest file
+BOT_VERSION = "v5.0"  # Change this to verify Railway deploys the latest file
 """
 Lovemaya Meta Ads Bot
 ======================
@@ -853,11 +853,10 @@ class MetaAdsExecutor:
 
     def create_full_campaign(self, campaign: dict) -> dict:
         """Create the complete campaign structure. Returns IDs."""
-        results = {"success": False, "errors": [], "warnings": []}
+        results = {"success": False, "errors": [], "warnings": [], "failed_step": "init"}
 
         try:
             # ── VALIDATION ──
-            # Auto-detect page ID if missing
             self.auto_detect_page_id()
             self.auto_detect_ig_id()
 
@@ -872,6 +871,7 @@ class MetaAdsExecutor:
             logger.info(f"Using Ad Account: {self.account_id}")
 
             # ── 1. CREATE CAMPAIGN ──
+            results["failed_step"] = "1-campaign"
             budget_type = campaign.get("_budget_type", "ABO")
             adset = campaign.get("adset", {})
             daily_budget = adset.get("daily_budget", 200000)
@@ -882,9 +882,8 @@ class MetaAdsExecutor:
             if objective == "OUTCOME_SALES" and not META_PIXEL_ID:
                 logger.warning("OUTCOME_SALES but no pixel — downgrading to OUTCOME_TRAFFIC")
                 objective = "OUTCOME_TRAFFIC"
-                results["warnings"].append("No Facebook Pixel → changed Sales to Traffic. Add META_PIXEL_ID in Railway for Sales.")
+                results["warnings"].append("⚠️ No Facebook Pixel → changed Sales to Traffic. Add META_PIXEL_ID in Railway for Sales.")
 
-            # Store resolved objective for debug (may differ from Claude's original)
             results["debug_resolved_objective"] = objective
             logger.info(f"Step 1: Creating campaign... (Budget type: {budget_type}, Objective: {objective})")
             campaign_data = {
@@ -895,22 +894,21 @@ class MetaAdsExecutor:
             }
 
             if budget_type == "CBO":
-                # CBO: budget at campaign level, Meta distributes across ad sets
                 campaign_data["daily_budget"] = daily_budget
                 campaign_data["is_campaign_budget_optimization_on"] = "true"
                 logger.info(f"CBO mode: daily_budget {daily_budget} set on campaign")
             else:
-                # ABO: don't set is_campaign_budget_optimization_on at all
-                # (Meta defaults to off; explicitly setting it causes 4834011 errors)
                 logger.info("ABO mode: budget will be on ad set")
 
+            logger.info(f"Campaign POST data: {json.dumps({k:v for k,v in campaign_data.items()})}")
             camp_result = self._post(f"{self.account_id}/campaigns", campaign_data)
             campaign_id = camp_result["id"]
             results["campaign_id"] = campaign_id
             results["budget_type"] = budget_type
-            logger.info(f"Campaign created: {campaign_id}")
+            logger.info(f"✅ Campaign created: {campaign_id}")
 
             # ── 2. BUILD TARGETING ──
+            results["failed_step"] = "2-targeting"
             logger.info("Step 2: Building targeting...")
             adset = campaign.get("adset", {})
             targeting = {
@@ -918,13 +916,11 @@ class MetaAdsExecutor:
                 "age_max": int(adset.get("age_max", 35)),
             }
 
-            # Gender
             gender_map = {"women": [2], "female": [2], "men": [1], "male": [1]}
             genders = gender_map.get(str(adset.get("gender", "")).lower(), [])
             if genders:
                 targeting["genders"] = genders
 
-            # Resolve locations
             cities = []
             for loc in adset.get("locations", []):
                 loc_name = loc if isinstance(loc, str) else loc.get("name", "")
@@ -939,12 +935,10 @@ class MetaAdsExecutor:
             if cities:
                 targeting["geo_locations"] = {"cities": cities}
             else:
-                # Fallback to Malaysia if no cities found
                 logger.warning("No cities found, falling back to Malaysia country targeting")
                 targeting["geo_locations"] = {"countries": ["MY"]}
                 results["warnings"].append("Cities not found, used Malaysia-wide targeting instead")
 
-            # Resolve interests (optional - campaign works without them)
             interests = []
             for interest in adset.get("interests", []):
                 interest_name = interest if isinstance(interest, str) else interest.get("name", "")
@@ -959,7 +953,6 @@ class MetaAdsExecutor:
             else:
                 results["warnings"].append("No interests could be resolved, using broad targeting")
 
-            # Set language/locale targeting based on ad variant languages
             LOCALE_MAP = {
                 "en": 6, "english": 6,
                 "ms": 41, "malay": 41, "bahasa malaysia": 41, "bm": 41,
@@ -973,7 +966,6 @@ class MetaAdsExecutor:
                 "id": 23, "indonesian": 23,
                 "hi": 17, "hindi": 17,
             }
-            # Get locales from adset.languages (set by Claude) or from ad_variants
             locale_ids = []
             adset_languages = adset.get("languages", [])
             if adset_languages:
@@ -982,7 +974,6 @@ class MetaAdsExecutor:
                     if lid and lid not in locale_ids:
                         locale_ids.append(lid)
             else:
-                # Fallback: extract from ad variants
                 for v in campaign.get("ad_variants", []):
                     lang_name = v.get("language", "").lower()
                     for key, lid in LOCALE_MAP.items():
@@ -995,22 +986,17 @@ class MetaAdsExecutor:
             else:
                 logger.info("No locale targeting — all languages")
 
-            # Set Advantage+ audience based on user's choice
             audience_type = campaign.get("_audience_type", "MANUAL")
             if audience_type == "ADV+":
                 targeting["targeting_automation"] = {"advantage_audience": 1}
-                logger.info("Advantage+ Audience ENABLED — Meta AI will expand targeting")
             else:
                 targeting["targeting_automation"] = {"advantage_audience": 0}
-                logger.info("Manual Targeting — using exact targeting specified")
 
-            logger.info(f"Targeting built: {json.dumps(targeting)[:200]}")
+            logger.info(f"✅ Targeting built: {json.dumps(targeting)[:200]}")
 
             # ── 3. CREATE AD SET ──
+            results["failed_step"] = "3-adset"
             logger.info(f"Step 3: Creating ad set... (Budget type: {budget_type})")
-
-            # Map objective to the correct optimization_goal, destination_type, and promoted_object
-            # (objective was already resolved and possibly downgraded in Step 1)
 
             OBJECTIVE_CONFIG = {
                 "OUTCOME_TRAFFIC": {
@@ -1037,11 +1023,9 @@ class MetaAdsExecutor:
 
             config = OBJECTIVE_CONFIG.get(objective, OBJECTIVE_CONFIG["OUTCOME_TRAFFIC"])
             opt_goal = config["optimization_goal"]
-            logger.info(f"Objective: {objective} → optimization_goal: {opt_goal}")
-
-            # Store debug info EARLY for error reporting (before any API call can fail)
             results["debug_optimization_goal"] = opt_goal
             results["debug_destination_type"] = config.get("destination_type", "none")
+            logger.info(f"Objective: {objective} → optimization_goal: {opt_goal}")
 
             adset_data = {
                 "name": adset.get("name", f"AdSet_{datetime.now().strftime('%Y%m%d')}"),
@@ -1050,8 +1034,6 @@ class MetaAdsExecutor:
                 "optimization_goal": opt_goal,
                 "targeting": json.dumps(targeting),
                 "status": "PAUSED",
-                # Meta requires "True" or "False" (capital) for this field (v24.0+)
-                "is_adset_budget_sharing_enabled": "False",
             }
 
             if config.get("destination_type"):
@@ -1059,16 +1041,19 @@ class MetaAdsExecutor:
             if config.get("promoted_object"):
                 adset_data["promoted_object"] = json.dumps(config["promoted_object"])
 
+            # Budget and budget sharing — MUST be set for ABO
             if budget_type == "CBO":
-                logger.info("CBO mode: no budget on ad set (campaign controls budget)")
+                logger.info("CBO mode: no budget on ad set")
             else:
                 adset_data["daily_budget"] = daily_budget
-                logger.info(f"ABO mode: daily_budget {daily_budget} set on ad set")
+                adset_data["is_adset_budget_sharing_enabled"] = "False"
+                logger.info(f"ABO mode: daily_budget {daily_budget}, budget_sharing=False")
 
+            logger.info(f"Adset POST data keys: {list(adset_data.keys())}")
             adset_result = self._post(f"{self.account_id}/adsets", adset_data)
             adset_id = adset_result["id"]
             results["adset_id"] = adset_id
-            logger.info(f"Ad Set created: {adset_id}")
+            logger.info(f"✅ Ad Set created: {adset_id}")
 
             # ── 4. CREATE AD CREATIVES + ADS ──
             logger.info("Step 4: Creating ad creatives...")
@@ -1821,20 +1806,20 @@ async def handle_approval(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 msg += f"\n\n⚠️ Some ads had issues:\n" + "\n".join(result["errors"])
         else:
             errors_text = "\n".join(result.get("errors", ["Unknown error"]))
-            # Include debug info so we can see what was sent
             debug_obj = result.get("debug_resolved_objective", campaign.get("objective", "?"))
             debug_opt = result.get("debug_optimization_goal", "?")
             debug_dest = result.get("debug_destination_type", "?")
             debug_pixel = "yes" if META_PIXEL_ID else "no"
+            debug_step = result.get("failed_step", "?")
+            debug_cid = result.get("campaign_id", "none")
             msg = (
                 f"❌ Campaign creation failed ({BOT_VERSION}):\n\n"
                 f"{errors_text}\n\n"
-                f"🔍 Debug: obj={debug_obj} opt={debug_opt} dest={debug_dest} pixel={debug_pixel}\n\n"
-                f"💡 Common fixes:\n"
-                f"• 'Invalid parameter' → Check META_PAGE_ID is correct\n"
-                f"• 'Invalid token' → Refresh META_ACCESS_TOKEN\n"
-                f"• 'Permission' → Token needs ads_management permission\n\n"
-                f"Check Railway logs for full error details."
+                f"🔍 Debug:\n"
+                f"  step={debug_step}\n"
+                f"  campaign_id={debug_cid}\n"
+                f"  obj={debug_obj} opt={debug_opt} dest={debug_dest}\n"
+                f"  pixel={debug_pixel}\n"
             )
 
         await query.edit_message_text(msg)
