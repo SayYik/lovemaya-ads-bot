@@ -1,0 +1,93 @@
+{
+  "_instructions": "ADD YOUR PRODUCTS HERE. For each product: put image files (PNG/JPG) in this products/ folder, then add an entry below. The bot matches keywords from your brief to find the right product and its images.",
+  "products": [
+    {
+      "id": "bath_gel",
+      "name": "Coco Bath Gel",
+      "taxonomy_code": "BATH GEL",
+      "keywords": ["bath gel", "coco bath", "shower gel", "body wash", "coco"],
+      "images": ["bath_gel_1.png", "bath_gel_2.png", "bath_gel_3.png"],
+      "description": "Love Maya Coco Bath Gel — signature coconut body wash"
+    },
+    {
+      "id": "body_lotion",
+      "name": "Body Lotion",
+      "taxonomy_code": "BODY LOTION",
+      "keywords": ["body lotion", "lotion", "moisturizer", "moisturiser"],
+      "images": ["body_lotion_1.png", "body_lotion_2.png", "body_lotion_3.png"],
+      "description": "Love Maya Body Lotion — daily hydration"
+    },
+    {
+      "id": "body_mist",
+      "name": "Body Mist",
+      "taxonomy_code": "BODY MIST",
+      "keywords": ["body mist", "mist", "fragrance mist", "body spray"],
+      "images": ["body_mist_1.png", "body_mist_2.png", "body_mist_3.png"],
+      "description": "Love Maya Body Mist — light fragrance spray"
+    },
+    {
+      "id": "body_scrub",
+      "name": "Body Scrub",
+      "taxonomy_code": "BODY SCRUB",
+      "keywords": ["body scrub", "scrub", "exfoliant", "exfoliator"],
+      "images": ["body_scrub_1.png", "body_scrub_2.png", "body_scrub_3.png"],
+      "description": "Love Maya Body Scrub — gentle exfoliation"
+    },
+    {
+      "id": "perfume",
+      "name": "Perfume",
+      "taxonomy_code": "PERFUME",
+      "keywords": ["perfume", "eau de", "fragrance", "scent"],
+      "images": ["perfume_1.png", "perfume_2.png", "perfume_3.png"],
+      "description": "Love Maya Perfume — signature scent"
+    },
+    {
+      "id": "hair_shampoo",
+      "name": "Hair Shampoo",
+      "taxonomy_code": "HAIR SHAMPOO",
+      "keywords": ["shampoo", "hair shampoo", "hair wash", "hair care"],
+      "images": ["hair_shampoo_1.png", "hair_shampoo_2.png", "hair_shampoo_3.png"],
+      "description": "Love Maya Hair Shampoo"
+    },
+    {
+      "id": "freedom_series",
+      "name": "Freedom Series",
+      "taxonomy_code": "FREEDOM SERIES",
+      "keywords": ["freedom", "freedom series"],
+      "images": ["freedom_1.png", "freedom_2.png", "freedom_3.png"],
+      "description": "Love Maya Freedom Series collection"
+    },
+    {
+      "id": "hope_series",
+      "name": "Hope Series",
+      "taxonomy_code": "HOPE SERIES",
+      "keywords": ["hope", "hope series"],
+      "images": ["hope_1.png", "hope_2.png", "hope_3.png"],
+      "description": "Love Maya Hope Series collection"
+    },
+    {
+      "id": "grounded_series",
+      "name": "Grounded Series",
+      "taxonomy_code": "GROUNDED SERIES",
+      "keywords": ["grounded", "grounded series"],
+      "images": ["grounded_1.png", "grounded_2.png", "grounded_3.png"],
+      "description": "Love Maya Grounded Series collection"
+    },
+    {
+      "id": "bundle",
+      "name": "Bundle / Gift Set",
+      "taxonomy_code": "BUNDLE",
+      "keywords": ["bundle", "gift set", "combo", "set", "package", "group buy"],
+      "images": ["bundle_1.png", "bundle_2.png", "bundle_3.png"],
+      "description": "Love Maya Bundle / Gift Set"
+    },
+    {
+      "id": "mixed_series",
+      "name": "Mixed Series",
+      "taxonomy_code": "MIXED SERIES",
+      "keywords": ["mixed", "mixed series", "all products", "multi product"],
+      "images": ["mixed_1.png", "mixed_2.png", "mixed_3.png"],
+      "description": "Love Maya Mixed Series — multiple products"
+    }
+  ]
+}
