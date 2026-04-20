@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-BOT_VERSION = "v5.3"  # Change this to verify Railway deploys the latest file
+BOT_VERSION = "v5.4"  # Change this to verify Railway deploys the latest file
 """
 Lovemaya Meta Ads Bot
 ======================
@@ -290,61 +290,185 @@ If the user mentions "cpas my" or "cpas" → use CPAS MY account.
 If the user mentions "shopify" or "website" → use Shopify MY account.
 If not mentioned, default to Shopify MY.
 Include the ad_account field in your JSON response with the account key: "cpas_sg", "cpas_my", or "shopify_my".
-- Ad Account: act_752480016788280
+
+=====================
+TAXONOMY NAMING SYSTEM
+=====================
+You MUST use these taxonomy codes to generate campaign_name, adset.name, and ad variant names.
+
+CAMPAIGN NAME FORMAT: Funnel | Brand | Destination | BizObjective | Year | CampaignObjective | BudgetType | BidStrategy
+Example: PP | LM | SHOPIFY | BAU | 2026 | SAL | CBO | HV
+
+ADSET NAME FORMAT: Audience | AudienceSetup | ProductCategory | PerformanceGoal | Language | Placement | FreeSection
+Example: CHI Female 18-65+ | A+ | BATH GEL | PUR | MIXED | A+ | Raya Sale
+
+AD NAME FORMAT: AdFormat | Angle | Month | CreativeName
+Example: VID | DISCOUNT | Apr | KOL Coco Bath Gel Promo
+
+--- TAXONOMY CODES ---
+
+FUNNEL:
+  PP = Prospecting (cold audience, new customers)
+  RT = Retargeting (warm audience, past visitors/engagers)
+
+BRAND:
+  LM = Love Maya
+  BG = Bath Garden
+  LMSGP = Love Maya Singapore
+  BGSGP = Bath Garden Singapore
+
+DESTINATION PLATFORM:
+  SHOPIFY = Shopify website campaigns
+  SHOPEE = Shopee CPAS campaigns
+  RETAIL = Retail / offline store campaigns
+  OTH = Other platforms
+
+BUSINESS OBJECTIVE:
+  BAU = Business as usual (always-on, evergreen)
+  CAMPAIGN = Time-limited campaign (sale, launch, event)
+
+CAMPAIGN OBJECTIVE (maps to Meta objective):
+  AWA = Awareness → OUTCOME_AWARENESS
+  TRF = Traffic → OUTCOME_TRAFFIC
+  EGM = Engagement → OUTCOME_ENGAGEMENT
+  LEADS = Leads → OUTCOME_LEADS
+  SAL = Sales → OUTCOME_SALES
+
+BUDGET TYPE (always use CBO):
+  CBO = Campaign Budget Optimization
+
+BID STRATEGY:
+  HV = Highest Volume (default, = LOWEST_COST_WITHOUT_CAP)
+  CPA = Cost per result goal
+  ROAS = ROAS goal
+  BC = Bid cap
+
+AUDIENCE (describe the target):
+  Format: "[Descriptor] [Age range]" e.g. "CHI Female 18-65+", "Broad 18-64", "KV BM Malay 18-65+"
+  For retargeting: use codes like "PUR P60D" (Purchasers Past 60 Days), "Cart Abandoners P90D", "WV P90D" (Website Visitors), "PE P90D" (Page Engagers), "VC P90D" (View Content), "LAL 3% 1PD" (Lookalike 3%), "1PD" (1st Party Data)
+
+AUDIENCE SETUP:
+  ORI = Original/Manual targeting
+  A+ = Advantage+ audience
+
+PRODUCT CATEGORY:
+  BATH GEL, BODY LOTION, BODY MIST, BODY SCRUB, BUNDLE, FREEDOM SERIES, HOPE SERIES, GROUNDED SERIES, MIXED SERIES, HAIR SHAMPOO, PERFUME
+
+PERFORMANCE GOAL:
+  CVS NO = Number of Conversions
+  VAL CVS = Value of Conversions
+  ATC = Add to Cart (CPAS only)
+  PUR = Purchase (CPAS only)
+  VC = View Content (CPAS only)
+  REACH = Reach
+  IMP = Impressions
+  LC = Link Clicks
+  LPV = Landing Page Views
+  VV = Video Views
+  PE = Post Engagements
+  DM = Direct Messages
+  ER = Event Responses
+
+LANGUAGE:
+  ALL = All languages
+  BM = Bahasa Malaysia
+  CHI = Chinese
+  ENG = English
+  MIXED = Multiple languages
+
+PLACEMENT:
+  A+ = Advantage+ (automatic, recommended)
+  FB = Facebook only
+  IG = Instagram only
+  Manual = Manual placement
+  Threads = Threads
+
+AD FORMAT:
+  STA = Static image
+  VID = Video
+  CLN = Collection
+  CAR = Carousel
+
+ANGLE (ad creative approach):
+  REVIEW = User reviews/unboxing/feedback
+  COMPARISON = Highlight differences vs competitors
+  REASON = "Why buy/choose us" (e.g. support local)
+  FEATURE = Key functions, USP
+  SOLUTION = Problem-solving (body odour, dry skin, etc.)
+  CUR = Drive curiosity, tease to spark interest
+  TREND = Current trends/viral/meme
+  STG = Storytelling (KOL daily routine, etc.)
+  DISCOUNT = Limited-time deals, price drops
+  FOMO = Urgency, limited edition/stock
+
+MONTH: Jan, Feb, Mar, Apr, May, Jun, Jul, Aug, Sep, Oct, Nov, Dec
+(Use the month the ad is uploaded/created, from today's date)
+
+--- END TAXONOMY CODES ---
 
 OBJECTIVE SELECTION GUIDE:
-Choose the best objective based on the brief's goal. If the user mentions a goal, map it like this:
-- "traffic" / "website visits" / "clicks" → OUTCOME_TRAFFIC (optimize: LINK_CLICKS)
-- "sales" / "conversions" / "purchase" → OUTCOME_SALES (optimize: OFFSITE_CONVERSIONS)
-- "awareness" / "reach" / "branding" → OUTCOME_AWARENESS (optimize: REACH)
-- "leads" / "sign up" / "form" → OUTCOME_LEADS (optimize: LEAD_GENERATION)
-- "engagement" / "likes" / "comments" → OUTCOME_ENGAGEMENT (optimize: POST_ENGAGEMENT)
-If the user doesn't specify a goal, choose the best objective based on the product and context.
+Choose the best objective based on the brief's goal:
+- "traffic" / "website visits" / "clicks" → OUTCOME_TRAFFIC (taxonomy: TRF)
+- "sales" / "conversions" / "purchase" → OUTCOME_SALES (taxonomy: SAL)
+- "awareness" / "reach" / "branding" → OUTCOME_AWARENESS (taxonomy: AWA)
+- "leads" / "sign up" / "form" → OUTCOME_LEADS (taxonomy: LEADS)
+- "engagement" / "likes" / "comments" → OUTCOME_ENGAGEMENT (taxonomy: EGM)
+If the user doesn't specify, choose the best objective for the product and context.
 
 LANGUAGE STRATEGY — DYNAMIC, USER-CONTROLLED:
-The user specifies which languages they want in their brief. Generate ONE ad variant per language requested.
+The user specifies which languages they want. Generate ONE ad variant per language.
 
 How to detect languages from the brief:
-- "english" / "EN" → English
-- "malay" / "bahasa" / "BM" / "bahasa malaysia" → Bahasa Malaysia
-- "chinese" / "CN" / "mandarin" / "中文" → Chinese (Simplified / 简体中文)
+- "english" / "EN" → English (taxonomy: ENG)
+- "malay" / "bahasa" / "BM" → Bahasa Malaysia (taxonomy: BM)
+- "chinese" / "CN" / "mandarin" → Chinese (taxonomy: CHI)
 - "tamil" / "TM" → Tamil
-- "arabic" / "AR" → Arabic
-- "korean" / "KR" / "한국어" → Korean
-- "japanese" / "JP" / "日本語" → Japanese
-- "thai" / "TH" → Thai
-- "indonesian" / "indo" / "BI" → Bahasa Indonesia
-- "hindi" / "HI" → Hindi
-- Any other language the user mentions → use that language
-
-If the user does NOT mention any languages, default to 3 variants: English, Bahasa Malaysia, Chinese (Simplified).
+- "all" → all languages (taxonomy: ALL)
+- "mixed" → mixed (taxonomy: MIXED)
+If no languages specified, default to 3 variants: English, BM, Chinese. Use taxonomy MIXED for the adset language field.
 
 TONE GUIDE per language:
 - English → clean, modern, aspirational
 - Bahasa Malaysia → warm, relatable, casual (not formal)
 - Chinese (简体中文) → elegant, concise, beauty-focused
 - Tamil → respectful, family-oriented, warm
-- For other languages → match the Lovemaya brand tone (elegant, natural, affordable luxury)
 
-Each variant should convey the SAME core message/offer but LOCALIZED naturally (not a direct translation — adapt the feel for that audience and culture).
+Each variant should convey the SAME core message/offer but LOCALIZED naturally (not a direct translation).
 
-IMPORTANT DATE: Today's date will be provided at the end of the brief. ALWAYS use that date for the campaign name MonthYear — NEVER use old dates like 2024.
+IMPORTANT DATE: Today's date will be provided at the end of the brief. ALWAYS use that date for Year and Month in taxonomy names.
 
 INTEREST TARGETING — USER-CONTROLLED:
-- If the user specifies interests in the brief (e.g. "interest: skincare, K-beauty, perfume") → use ONLY those exact interests
-- If the user does NOT specify interests → choose 3-5 relevant interests for the product
-- Always include the interests in the JSON so the user can review them before approving
+- If the user specifies interests → use ONLY those exact interests
+- If not → choose 3-5 relevant interests for the product
+- Always include interests in the JSON
 
 RESPOND WITH VALID JSON ONLY (no markdown, no ```). Use this exact structure:
 
 {
-  "campaign_name": "Lovemaya_[Product]_[Objective]_[MonthYear e.g. Apr2026]",
+  "taxonomy": {
+    "funnel": "PP",
+    "brand": "LM",
+    "destination": "SHOPIFY",
+    "biz_objective": "BAU",
+    "year": "2026",
+    "campaign_objective": "SAL",
+    "budget_type": "CBO",
+    "bid_strategy": "HV",
+    "audience": "Female 18-45",
+    "audience_setup": "A+",
+    "product_category": "BATH GEL",
+    "performance_goal": "LC",
+    "language": "MIXED",
+    "placement": "A+",
+    "free_section": ""
+  },
+  "campaign_name": "PP | LM | SHOPIFY | BAU | 2026 | SAL | CBO | HV",
   "ad_account": "shopify_my",
-  "objective": "OUTCOME_TRAFFIC",
+  "objective": "OUTCOME_SALES",
   "currency": "MYR",
   "website_url": "https://lovemaya.co",
   "adset": {
-    "name": "[descriptive ad set name]",
+    "name": "Female 18-45 | A+ | BATH GEL | LC | MIXED | A+",
     "daily_budget": 1000,
     "age_min": 18,
     "age_max": 45,
@@ -352,17 +476,18 @@ RESPOND WITH VALID JSON ONLY (no markdown, no ```). Use this exact structure:
     "optimization_goal": "LINK_CLICKS",
     "locations": ["Malaysia"],
     "interests": ["Beauty", "Fragrance"],
-    "languages": ["en", "zh_CN"]
+    "languages": ["en", "ms", "zh_CN"]
   },
   "ad_variants": [
     {
-      "name": "Variant_A_[LANG_CODE]",
-      "language": "[Language Name]",
+      "name": "STA | DISCOUNT | Apr | EN Bath Gel Promo",
+      "language": "English",
+      "ad_format": "STA",
+      "angle": "DISCOUNT",
       "primary_text": "under 125 chars — in that language",
       "headline": "under 40 chars — in that language",
       "description": "under 30 chars — in that language",
-      "cta": "SHOP_NOW",
-      "angle": "[angle]"
+      "cta": "SHOP_NOW"
     }
   ],
   "image_prompts": [
@@ -376,20 +501,24 @@ RESPOND WITH VALID JSON ONLY (no markdown, no ```). Use this exact structure:
 }
 
 RULES:
+- ALWAYS use the taxonomy naming format with pipe " | " separators
+- campaign_name = Funnel | Brand | Destination | BizObjective | Year | CampaignObjective | BudgetType | BidStrategy
+- adset.name = Audience | AudienceSetup | ProductCategory | PerformanceGoal | Language | Placement | FreeSection (omit FreeSection if empty)
+- Each ad variant name = AdFormat | Angle | Month | CreativeName
 - ONLY create ONE campaign, ONE ad set, and one ad per language. Never duplicate.
-- Generate ONE variant per language the user requests (could be 1, 2, 3, 4, or more)
+- Generate ONE variant per language the user requests
 - If no languages specified, default to 3: English, Bahasa Malaysia, Chinese (Simplified)
 - Each variant is LOCALIZED (not a direct translation) — adapt the feel for that audience
-- Use different angles for each variant (benefit-led, emotional, urgency, social-proof, etc.)
+- Use different angles for each variant (REVIEW, DISCOUNT, FEATURE, SOLUTION, FOMO, etc.)
 - Primary text under 125 chars, headline under 40, description under 30
 - CTA must be: SHOP_NOW, LEARN_MORE, SIGN_UP, BOOK_NOW, or GET_OFFER
-- ALWAYS include the "language" field in each variant
-- Include detailed Manus instructions with exact button clicks and field values
-- Check against Meta Advertising Standards and flag any risks in policy_check
-- Match the budget, targeting, and objective from the user's brief
-- Choose the RIGHT objective based on the goal (see OBJECTIVE SELECTION GUIDE above)
+- ALWAYS include "language", "ad_format", and "angle" fields in each variant
 - Budget is in MYR (Malaysian Ringgit). MYR 10/day = daily_budget: 1000 (Meta uses cents)
-- Default targeting: Malaysia. Use specific states/cities if the user mentions them
+- Default targeting: Malaysia. Use specific states/cities if mentioned
+- For retargeting briefs (mention "retarget", "warm audience", "past buyers"): use funnel RT
+- For BAU (always-on, no specific promo): use biz_objective BAU
+- For time-limited (sale, launch, event, promo): use biz_objective CAMPAIGN
+- Budget type is always CBO, bid strategy default is HV unless user specifies otherwise
 - If the brief is missing info, use sensible Lovemaya defaults for Malaysian market
 - BUDGET TYPE: If user says "CBO" or "campaign budget" → Campaign Budget Optimization. If "ABO" or "adset budget" → Ad Set Budget. Default is ABO.
 - AUDIENCE TYPE: If user says "adv+" or "advantage+" → Advantage+ Audience (Meta AI expands targeting). If "manual targeting" or "adv-" → Manual Targeting (exact targeting). Default is Manual.
@@ -1566,9 +1695,13 @@ async def handle_brief(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Step 4: Send campaign preview
         variants_preview = ""
         for v in campaign.get("ad_variants", []):
+            ad_name = v.get("name", "")
             lang = v.get("language", "")
             lang_tag = f" ({lang})" if lang else ""
-            variants_preview += f"\n• [{v.get('angle', '')}{lang_tag}] {v.get('primary_text', '')}"
+            if ad_name and "|" in ad_name:
+                variants_preview += f"\n• {ad_name}\n  → {v.get('primary_text', '')}"
+            else:
+                variants_preview += f"\n• [{v.get('angle', '')}{lang_tag}] {v.get('primary_text', '')}"
 
         acct = campaign.get("_ad_account", detected_account)
         currency = acct.get("currency", "MYR")
@@ -1576,17 +1709,20 @@ async def handle_brief(update: Update, context: ContextTypes.DEFAULT_TYPE):
         budget_label = "Campaign Budget (CBO)" if budget_type == "CBO" else "Ad Set Budget (ABO)"
         audience_label = "Advantage+ (AI)" if campaign.get("_audience_type") == "ADV+" else "Manual"
 
+        # Show taxonomy names
+        adset_name = campaign.get('adset', {}).get('name', 'Ad Set')
         preview_text = (
             f"✅ Campaign Ready!\n\n"
-            f"📂 Ad Account: {acct['name']}\n"
-            f"📋 {campaign.get('campaign_name', 'Campaign')}\n"
+            f"📂 Account: {acct['name']}\n"
+            f"📋 Campaign: {campaign.get('campaign_name', 'Campaign')}\n"
+            f"📁 Ad Set: {adset_name}\n"
             f"🎯 {campaign.get('objective', 'TRAFFIC')}\n"
             f"💰 {currency} {budget} (cents)/day — {budget_label}\n"
             f"🧠 Audience: {audience_label}\n"
             f"👥 {campaign.get('adset', {}).get('gender', 'All')}, "
             f"age {campaign.get('adset', {}).get('age_min', 18)}-{campaign.get('adset', {}).get('age_max', 65)}\n"
             f"📍 {', '.join(str(l) for l in campaign.get('adset', {}).get('locations', []))}\n\n"
-            f"📝 Ad Variants:{variants_preview}\n\n"
+            f"📝 Ads:{variants_preview}\n\n"
             f"🛡 Policy: {campaign.get('policy_check', 'No issues')}"
         )
 
