@@ -2951,6 +2951,16 @@ async def handle_approval(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.edit_message_text("✅ Strategy approved! Generating campaign...")
 
+        # Re-detect product images (in case context.user_data was lost)
+        if not context.user_data.get("product_images"):
+            re_matched = detect_product(original_brief)
+            if re_matched:
+                best = re_matched[0]
+                re_images = get_product_images(best, original_brief)
+                context.user_data["selected_product"] = best
+                context.user_data["product_images"] = re_images
+                logger.info(f"Strategy approve: re-detected {best['name']} ({len(re_images)} images)")
+
         # Now generate campaign with enriched brief
         try:
             detected_account = detect_ad_account(original_brief)
