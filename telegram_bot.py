@@ -1397,16 +1397,42 @@ def trigger_manus(instructions: str) -> dict:
 # ─────────────────────────────────────────────
 
 async def cmd_debug(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Debug env vars."""
+    """Debug env vars and product catalog."""
     import os as _os
     meta_vars = {k: v[:8] + "..." if len(v) > 8 else v for k, v in _os.environ.items() if "META" in k or "PIXEL" in k}
     raw_pixel = _os.getenv("META_PIXEL_ID", "<NOT FOUND>")
+
+    # Check product catalog and images
+    catalog_exists = _os.path.exists(CATALOG_PATH)
+    products_dir_exists = _os.path.isdir(PRODUCTS_DIR)
+    products_files = []
+    if products_dir_exists:
+        products_files = [f for f in _os.listdir(PRODUCTS_DIR) if f != "catalog.json"]
+
+    # Check image detection
+    catalog = load_product_catalog()
+    test_product = None
+    test_images = []
+    for p in catalog:
+        if "bath gel" in [k.lower() for k in p.get("keywords", [])]:
+            test_product = p
+            test_images = get_product_images(p, "ocean bath gel")
+            break
+
     await update.message.reply_text(
-        f"🔧 DEBUG ENV VARS:\n\n"
-        f"META_PIXEL_ID raw: '{raw_pixel}'\n"
-        f"META_PIXEL_ID var: '{META_PIXEL_ID}'\n"
-        f"len: {len(raw_pixel)}\n"
-        f"repr: {repr(raw_pixel)}\n\n"
+        f"🔧 DEBUG INFO:\n\n"
+        f"Version: {BOT_VERSION}\n"
+        f"Pixel: '{META_PIXEL_ID}'\n\n"
+        f"📂 PRODUCTS:\n"
+        f"PRODUCTS_DIR: {PRODUCTS_DIR}\n"
+        f"Dir exists: {products_dir_exists}\n"
+        f"Catalog exists: {catalog_exists}\n"
+        f"Files in products/: {len(products_files)}\n"
+        f"Files: {', '.join(products_files[:5])}{'...' if len(products_files) > 5 else ''}\n\n"
+        f"🔍 TEST DETECTION:\n"
+        f"Bath gel found: {test_product is not None}\n"
+        f"Ocean images: {len(test_images)}\n"
+        f"Image paths: {test_images[:2] if test_images else 'NONE'}\n\n"
         f"All META vars:\n" + "\n".join(f"  {k}={v}" for k, v in meta_vars.items())
     )
 
