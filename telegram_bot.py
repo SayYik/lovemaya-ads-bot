@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-BOT_VERSION = "v4.8"  # Change this to verify Railway deploys the latest file
+BOT_VERSION = "v4.9"  # Change this to verify Railway deploys the latest file
 """
 Lovemaya Meta Ads Bot
 ======================
@@ -750,10 +750,10 @@ class MetaAdsExecutor:
             data["bid_strategy"] = "LOWEST_COST_WITHOUT_CAP"
             data.pop("bid_amount", None)
             data.pop("bid_cap", None)
-        # Convert Python booleans to Meta-style strings (capital True/False)
+        # Convert Python booleans to string for form encoding
         for key, value in list(data.items()):
             if isinstance(value, bool):
-                data[key] = "True" if value else "False"
+                data[key] = "true" if value else "false"
         logger.info(f"POST {endpoint} | data keys: {list(data.keys())}")
         logger.info(f"POST {endpoint} | data values: { {k: v for k, v in data.items() if k != 'access_token'} }")
         resp = requests.post(f"{self.base_url}/{endpoint}", data=data, timeout=30)
@@ -897,12 +897,12 @@ class MetaAdsExecutor:
             if budget_type == "CBO":
                 # CBO: budget at campaign level, Meta distributes across ad sets
                 campaign_data["daily_budget"] = daily_budget
-                campaign_data["is_campaign_budget_optimization_on"] = "True"
+                campaign_data["is_campaign_budget_optimization_on"] = "true"
                 logger.info(f"CBO mode: daily_budget {daily_budget} set on campaign")
             else:
-                # ABO: explicitly tell campaign that CBO is OFF
-                campaign_data["is_campaign_budget_optimization_on"] = "False"
-                logger.info("ABO mode: CBO disabled on campaign, budget will be on ad set")
+                # ABO: don't set is_campaign_budget_optimization_on at all
+                # (Meta defaults to off; explicitly setting it causes 4834011 errors)
+                logger.info("ABO mode: budget will be on ad set")
 
             camp_result = self._post(f"{self.account_id}/campaigns", campaign_data)
             campaign_id = camp_result["id"]
