@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-BOT_VERSION = "v5.7"  # Change this to verify Railway deploys the latest file
+BOT_VERSION = "v5.8"  # Change this to verify Railway deploys the latest file
 """
 Lovemaya Meta Ads Bot
 ======================
@@ -161,6 +161,64 @@ def detect_audience_type(text: str) -> str:
 
 # Store pending campaigns waiting for approval
 pending_campaigns = {}
+
+# Store pending briefs waiting for product selection
+pending_product_selection = {}
+
+# ─────────────────────────────────────────────
+# PRODUCT CATALOG — auto-matches products from brief
+# ─────────────────────────────────────────────
+
+PRODUCTS_DIR = os.path.join(os.path.dirname(__file__), "products")
+CATALOG_PATH = os.path.join(PRODUCTS_DIR, "catalog.json")
+
+
+def load_product_catalog() -> list:
+    """Load product catalog from JSON file."""
+    try:
+        with open(CATALOG_PATH, "r") as f:
+            data = json.load(f)
+        return data.get("products", [])
+    except Exception as e:
+        logger.warning(f"Could not load product catalog: {e}")
+        return []
+
+
+def detect_product(text: str) -> list:
+    """
+    Detect which product(s) the user is referring to in their brief.
+    Returns list of matched products sorted by keyword match length (best match first).
+    """
+    catalog = load_product_catalog()
+    if not catalog:
+        return []
+
+    text_lower = text.lower()
+    matches = []
+
+    for product in catalog:
+        for keyword in sorted(product.get("keywords", []), key=len, reverse=True):
+            if keyword in text_lower:
+                matches.append(product)
+                break  # One match per product is enough
+
+    return matches
+
+
+def get_product_images(product: dict) -> list:
+    """Get available image file paths for a product (only files that actually exist)."""
+    available = []
+    for img_name in product.get("images", []):
+        img_path = os.path.join(PRODUCTS_DIR, img_name)
+        if os.path.exists(img_path):
+            available.append(img_path)
+    return available
+
+
+def get_all_products_for_picker() -> list:
+    """Get all products from catalog for the inline picker buttons."""
+    return load_product_catalog()
+
 
 # ─────────────────────────────────────────────
 # DTC PERSONAL CARE KNOWLEDGE BASE
@@ -1811,7 +1869,65 @@ async def handle_brief(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             pass  # Normal brief, continue
 
-    # Step 0: Generate strategy suggestion first (unless brief is very detailed)
+    # Step 0A: Detect product from brief
+    matched_products = detect_product(brief_text)
+
+    if not matched_products and user_id not in pending_product_selection and user_id not in pending_strategies:
+        # No product detected — ask user to pick one
+        catalog = get_all_products_for_picker()
+        if catalog:
+            # Store the brief so we can resume after product selection
+            pending_product_selection[user_id] = {"brief": brief_text}
+
+            # Build product picker buttons (2 per row)
+            buttons = []
+            row = []
+            for i, product in enumerate(catalog):
+                row.append(InlineKeyboardButton(
+                    f"📦 {product['name']}",
+                    callback_data=f"pick_product_{product['id']}"
+                ))
+                if len(row) == 2:
+                    buttons.append(row)
+                    row = []
+            if row:
+                buttons.append(row)
+            buttons.append([InlineKeyboardButton("🔀 Mixed / All Products", callback_data="pick_product_mixed_series")])
+
+            await update.message.reply_text(
+                "🤔 I couldn't detect which product you want to promote.\n\n"
+                "Which product is this ad for?",
+                reply_markup=InlineKeyboardMarkup(buttons),
+            )
+            return
+
+    # If user came back from product selection, retrieve the stored product
+    if user_id in pending_product_selection:
+        stored = pending_product_selection[user_id]
+        if "selected_product" in stored:
+            # Product was selected via picker — enrich brief with product info
+            selected = stored["selected_product"]
+            brief_text = stored["brief"]
+            product_images = get_product_images(selected)
+            # Tag the brief with product info so Claude and the image flow know
+            brief_text += f"\n[PRODUCT: {selected['name']} | CODE: {selected['taxonomy_code']}]"
+            # Store product images for later use
+            context.user_data["selected_product"] = selected
+            context.user_data["product_images"] = product_images
+            del pending_product_selection[user_id]
+        else:
+            # Brief has product detected already
+            del pending_product_selection[user_id]
+
+    # If product was detected from brief text, store it
+    if matched_products and "selected_product" not in context.user_data:
+        best_match = matched_products[0]
+        product_images = get_product_images(best_match)
+        context.user_data["selected_product"] = best_match
+        context.user_data["product_images"] = product_images
+        logger.info(f"Product auto-detected: {best_match['name']} ({len(product_images)} images available)")
+
+    # Step 0B: Generate strategy suggestion first (unless brief is very detailed)
     brief_lower = brief_text.lower()
     is_detailed = len(brief_text) > 200 or "|" in brief_text  # Already has taxonomy codes
     has_pending = user_id in pending_strategies
@@ -1948,49 +2064,96 @@ async def handle_brief(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await status_msg.edit_text(preview_text)
 
-        # Step 5: Generate AI images (if Together API is configured)
-        image_prompts = campaign.get("image_prompts", [])
-        # Fallback: old single image_prompt field
-        if not image_prompts and campaign.get("image_prompt"):
-            image_prompts = [campaign["image_prompt"]]
+        # Step 5: Show product catalog images OR generate AI images
+        product_images = context.user_data.get("product_images", [])
+        selected_product = context.user_data.get("selected_product")
 
-        if (HIGGSFIELD_API_KEY or TOGETHER_API_KEY) and image_prompts:
-            await update.message.reply_text("🎨 Generating ad images... (this takes ~30 seconds)")
+        if product_images:
+            # ── USE REAL PRODUCT PHOTOS FROM CATALOG ──
+            product_name = selected_product.get("name", "Product") if selected_product else "Product"
+            await update.message.reply_text(f"📸 Found {len(product_images)} product image(s) for **{product_name}**. Pick one for your ad:", parse_mode="Markdown")
 
-            generated_paths = generate_multiple_images(image_prompts[:3])
-            valid_images = [(i, p) for i, p in enumerate(generated_paths) if p]
+            pending_images[user_id] = {
+                "paths": product_images,
+                "prompts": [f"Product photo: {product_name}"] * len(product_images),
+            }
 
-            if valid_images:
-                # Store images for this user
-                pending_images[user_id] = {
-                    "paths": generated_paths,
-                    "prompts": image_prompts,
-                }
+            for idx, path in enumerate(product_images[:6]):
+                try:
+                    with open(path, "rb") as photo:
+                        await update.message.reply_photo(
+                            photo=photo,
+                            caption=f"📸 {product_name} — Image {idx + 1}",
+                            reply_markup=InlineKeyboardMarkup([[
+                                InlineKeyboardButton(f"✅ Use Image {idx + 1}", callback_data=f"pick_img_{idx}"),
+                            ]]),
+                        )
+                except Exception as img_err:
+                    logger.error(f"Failed to send catalog image {idx}: {img_err}")
 
-                # Send each image with a selection button
-                for idx, path in valid_images:
-                    try:
-                        with open(path, "rb") as photo:
-                            await update.message.reply_photo(
-                                photo=photo,
-                                caption=f"🖼 Option {idx + 1}: {image_prompts[idx][:150]}...",
-                                reply_markup=InlineKeyboardMarkup([[
-                                    InlineKeyboardButton(f"✅ Use Image {idx + 1}", callback_data=f"pick_img_{idx}"),
-                                ]]),
-                            )
-                    except Exception as img_err:
-                        logger.error(f"Failed to send image {idx}: {img_err}")
+            await update.message.reply_text(
+                "👆 Pick a product image above, or choose an action:",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🎨 Generate AI image instead", callback_data="gen_ai_images")],
+                    [InlineKeyboardButton("🚀 Create without image", callback_data="exec_api")],
+                    [InlineKeyboardButton("❌ Cancel", callback_data="exec_cancel")],
+                ]),
+            )
+        else:
+            # ── NO CATALOG IMAGES — GENERATE WITH AI ──
+            image_prompts = campaign.get("image_prompts", [])
+            if not image_prompts and campaign.get("image_prompt"):
+                image_prompts = [campaign["image_prompt"]]
 
-                # Also offer to skip image selection
-                await update.message.reply_text(
-                    "👆 Pick an image above, or choose an action:",
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("🚀 Create without image", callback_data="exec_api")],
-                        [InlineKeyboardButton("❌ Cancel", callback_data="exec_cancel")],
-                    ]),
-                )
+            if (HIGGSFIELD_API_KEY or TOGETHER_API_KEY) and image_prompts:
+                await update.message.reply_text("🎨 No product images in catalog. Generating AI images... (~30 seconds)")
+
+                generated_paths = generate_multiple_images(image_prompts[:3])
+                valid_images = [(i, p) for i, p in enumerate(generated_paths) if p]
+
+                if valid_images:
+                    pending_images[user_id] = {
+                        "paths": generated_paths,
+                        "prompts": image_prompts,
+                    }
+
+                    for idx, path in valid_images:
+                        try:
+                            with open(path, "rb") as photo:
+                                await update.message.reply_photo(
+                                    photo=photo,
+                                    caption=f"🖼 AI Image {idx + 1}: {image_prompts[idx][:150]}...",
+                                    reply_markup=InlineKeyboardMarkup([[
+                                        InlineKeyboardButton(f"✅ Use Image {idx + 1}", callback_data=f"pick_img_{idx}"),
+                                    ]]),
+                                )
+                        except Exception as img_err:
+                            logger.error(f"Failed to send image {idx}: {img_err}")
+
+                    await update.message.reply_text(
+                        "👆 Pick an image above, or choose an action:",
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("🚀 Create without image", callback_data="exec_api")],
+                            [InlineKeyboardButton("❌ Cancel", callback_data="exec_cancel")],
+                        ]),
+                    )
+                else:
+                    keyboard = [
+                        [
+                            InlineKeyboardButton("🚀 Create via API", callback_data="exec_api"),
+                            InlineKeyboardButton("🤖 Send to Manus", callback_data="exec_manus"),
+                        ],
+                        [
+                            InlineKeyboardButton("📋 Copy Instructions", callback_data="exec_copy"),
+                            InlineKeyboardButton("❌ Cancel", callback_data="exec_cancel"),
+                        ],
+                    ]
+                    await update.message.reply_text(
+                        "⚠️ Image generation failed. You can still create the campaign:",
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                    )
             else:
-                # Image generation failed — show normal buttons
+                # No image API keys and no catalog images — show normal approval buttons
                 keyboard = [
                     [
                         InlineKeyboardButton("🚀 Create via API", callback_data="exec_api"),
@@ -2002,25 +2165,9 @@ async def handle_brief(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     ],
                 ]
                 await update.message.reply_text(
-                    "⚠️ Image generation failed. You can still create the campaign:",
+                    "What should I do?",
                     reply_markup=InlineKeyboardMarkup(keyboard),
                 )
-        else:
-            # No Together API — show normal approval buttons
-            keyboard = [
-                [
-                    InlineKeyboardButton("🚀 Create via API", callback_data="exec_api"),
-                    InlineKeyboardButton("🤖 Send to Manus", callback_data="exec_manus"),
-                ],
-                [
-                    InlineKeyboardButton("📋 Copy Instructions", callback_data="exec_copy"),
-                    InlineKeyboardButton("❌ Cancel", callback_data="exec_cancel"),
-                ],
-            ]
-            await update.message.reply_text(
-                "What should I do?",
-                reply_markup=InlineKeyboardMarkup(keyboard),
-            )
 
     except json.JSONDecodeError as e:
         await status_msg.edit_text(f"⚠️ Claude returned invalid JSON. Try rephrasing your brief.\nError: {e}")
@@ -2036,6 +2183,110 @@ async def handle_approval(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_id = query.from_user.id
     action = query.data
+
+    # ── PRODUCT PICKER CALLBACK ──
+    if action.startswith("pick_product_"):
+        product_id = action.replace("pick_product_", "")
+        stored = pending_product_selection.get(user_id)
+        if not stored:
+            await query.edit_message_text("⚠️ Session expired. Send your brief again.")
+            return
+
+        # Find the selected product from catalog
+        catalog = load_product_catalog()
+        selected = None
+        for p in catalog:
+            if p["id"] == product_id:
+                selected = p
+                break
+
+        if not selected:
+            await query.edit_message_text("⚠️ Product not found. Send your brief again.")
+            return
+
+        # Store selection and re-trigger the brief handler
+        pending_product_selection[user_id]["selected_product"] = selected
+        product_images = get_product_images(selected)
+        img_count = len(product_images)
+
+        await query.edit_message_text(
+            f"✅ Got it — **{selected['name']}**\n"
+            f"📸 {img_count} product image{'s' if img_count != 1 else ''} available in catalog\n\n"
+            f"Processing your brief...",
+            parse_mode="Markdown",
+        )
+
+        # Re-trigger the brief handler with the original brief text
+        # We create a fake-ish flow by calling handle_brief logic
+        original_brief = stored["brief"]
+        # We need to simulate a message — use query.message.reply_text to continue
+        # Instead, we manually invoke the flow:
+        context.user_data["selected_product"] = selected
+        context.user_data["product_images"] = product_images
+
+        # Build the enriched brief
+        enriched_brief = original_brief + f"\n[PRODUCT: {selected['name']} | CODE: {selected['taxonomy_code']}]"
+
+        # Continue to strategy suggestion
+        try:
+            client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
+            memories = load_memory()
+            learnings_text = "\n".join([m.get("text", "")[:200] for m in memories[-10:]]) if memories else "No brand learnings yet."
+            today = datetime.now().strftime("%B %d, %Y")
+
+            strategy_msg = client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=1500,
+                messages=[{"role": "user", "content": STRATEGY_PROMPT.format(
+                    brief=enriched_brief, learnings=learnings_text, today=today
+                )}]
+            )
+
+            strategy_text = strategy_msg.content[0].text.strip()
+            strategy = json.loads(strategy_text)
+
+            pending_strategies[user_id] = {
+                "strategy": strategy,
+                "original_brief": enriched_brief,
+            }
+
+            # Clean up product selection
+            if user_id in pending_product_selection:
+                del pending_product_selection[user_id]
+
+            # Format strategy suggestion
+            angles_text = ""
+            for a in strategy.get("suggested_angles", []):
+                angles_text += f"\n  • {a['code']} — {a['reason']}"
+
+            suggestion = (
+                f"💡 Strategy Suggestion:\n\n"
+                f"{strategy.get('strategy_summary', '')}\n\n"
+                f"📊 Recommended Setup:\n"
+                f"  Product: {selected['name']}\n"
+                f"  Funnel: {strategy.get('funnel', '?')}\n"
+                f"  Objective: {strategy.get('campaign_objective', '?')}\n"
+                f"  Audience: {strategy.get('audience_suggestion', '?')}\n"
+                f"  Audience Setup: {strategy.get('audience_setup', '?')}\n"
+                f"  Placement: {strategy.get('placement', '?')}\n"
+                f"  Ad Format: {strategy.get('ad_format', '?')}\n"
+                f"  Angles: {angles_text}\n\n"
+                f"💵 Budget: {strategy.get('budget_suggestion', '?')}\n"
+                f"💡 Reason: {strategy.get('strategy_reason', '')}"
+            )
+
+            await query.message.reply_text(
+                suggestion,
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ Approve & Create", callback_data="strategy_approve")],
+                    [InlineKeyboardButton("✏️ Let me adjust my brief", callback_data="strategy_adjust")],
+                    [InlineKeyboardButton("⏩ Skip suggestions next time", callback_data="strategy_skip")],
+                ]),
+            )
+        except Exception as e:
+            logger.error(f"Strategy generation failed after product pick: {e}")
+            await query.message.reply_text(f"⚠️ Strategy suggestion failed: {e}\n\nSend your brief again to retry.")
+        return
 
     # ── STRATEGY SUGGESTION CALLBACKS ──
     if action == "strategy_approve":
@@ -2118,50 +2369,86 @@ async def handle_approval(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
             await query.message.reply_text(preview_text)
 
-            # Step: Generate AI images (if API keys configured)
-            image_prompts = campaign.get("image_prompts", [])
-            if not image_prompts and campaign.get("image_prompt"):
-                image_prompts = [campaign["image_prompt"]]
+            # Step: Show product catalog images OR generate AI images
+            product_images = context.user_data.get("product_images", [])
+            selected_product = context.user_data.get("selected_product")
 
-            if (HIGGSFIELD_API_KEY or TOGETHER_API_KEY) and image_prompts:
-                await query.message.reply_text("🎨 Generating ad images... (this takes ~30 seconds)")
+            if product_images:
+                # ── USE REAL PRODUCT PHOTOS FROM CATALOG ──
+                product_name = selected_product.get("name", "Product") if selected_product else "Product"
+                await query.message.reply_text(f"📸 Found {len(product_images)} product image(s) for **{product_name}**. Pick one for your ad:", parse_mode="Markdown")
 
-                generated_paths = generate_multiple_images(image_prompts[:3])
-                valid_images = [(i, p) for i, p in enumerate(generated_paths) if p]
+                pending_images[user_id] = {
+                    "paths": product_images,
+                    "prompts": [f"Product photo: {product_name}"] * len(product_images),
+                }
 
-                if valid_images:
-                    pending_images[user_id] = {
-                        "paths": generated_paths,
-                        "prompts": image_prompts,
-                    }
+                for idx, path in enumerate(product_images[:6]):
+                    try:
+                        with open(path, "rb") as photo:
+                            await query.message.reply_photo(
+                                photo=photo,
+                                caption=f"📸 {product_name} — Image {idx + 1}",
+                                reply_markup=InlineKeyboardMarkup([[
+                                    InlineKeyboardButton(f"✅ Use Image {idx + 1}", callback_data=f"pick_img_{idx}"),
+                                ]]),
+                            )
+                    except Exception as img_err:
+                        logger.error(f"Failed to send catalog image {idx}: {img_err}")
 
-                    for idx, path in valid_images:
-                        try:
-                            with open(path, "rb") as photo:
-                                await query.message.reply_photo(
-                                    photo=photo,
-                                    caption=f"🖼 Option {idx + 1}: {image_prompts[idx][:150]}...",
-                                    reply_markup=InlineKeyboardMarkup([[
-                                        InlineKeyboardButton(f"✅ Use Image {idx + 1}", callback_data=f"pick_img_{idx}"),
-                                    ]]),
-                                )
-                        except Exception as img_err:
-                            logger.error(f"Failed to send image {idx}: {img_err}")
-
-                    await query.message.reply_text(
-                        "👆 Pick an image above, or choose an action:",
-                        reply_markup=InlineKeyboardMarkup([
-                            [InlineKeyboardButton("🚀 Create without image", callback_data="exec_api")],
-                            [InlineKeyboardButton("❌ Cancel", callback_data="exec_cancel")],
-                        ]),
-                    )
-                else:
-                    await query.message.reply_text(
-                        "⚠️ Image generation failed. You can still create the campaign:",
-                        reply_markup=InlineKeyboardMarkup(keyboard),
-                    )
+                await query.message.reply_text(
+                    "👆 Pick a product image above, or choose an action:",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🎨 Generate AI image instead", callback_data="gen_ai_images")],
+                        [InlineKeyboardButton("🚀 Create without image", callback_data="exec_api")],
+                        [InlineKeyboardButton("❌ Cancel", callback_data="exec_cancel")],
+                    ]),
+                )
             else:
-                await query.message.reply_text("What should I do?", reply_markup=InlineKeyboardMarkup(keyboard))
+                # ── NO CATALOG IMAGES — GENERATE WITH AI ──
+                image_prompts = campaign.get("image_prompts", [])
+                if not image_prompts and campaign.get("image_prompt"):
+                    image_prompts = [campaign["image_prompt"]]
+
+                if (HIGGSFIELD_API_KEY or TOGETHER_API_KEY) and image_prompts:
+                    await query.message.reply_text("🎨 No product images in catalog. Generating AI images... (~30 seconds)")
+
+                    generated_paths = generate_multiple_images(image_prompts[:3])
+                    valid_images = [(i, p) for i, p in enumerate(generated_paths) if p]
+
+                    if valid_images:
+                        pending_images[user_id] = {
+                            "paths": generated_paths,
+                            "prompts": image_prompts,
+                        }
+
+                        for idx, path in valid_images:
+                            try:
+                                with open(path, "rb") as photo:
+                                    await query.message.reply_photo(
+                                        photo=photo,
+                                        caption=f"🖼 AI Image {idx + 1}: {image_prompts[idx][:150]}...",
+                                        reply_markup=InlineKeyboardMarkup([[
+                                            InlineKeyboardButton(f"✅ Use Image {idx + 1}", callback_data=f"pick_img_{idx}"),
+                                        ]]),
+                                    )
+                            except Exception as img_err:
+                                logger.error(f"Failed to send image {idx}: {img_err}")
+
+                        await query.message.reply_text(
+                            "👆 Pick an image above, or choose an action:",
+                            reply_markup=InlineKeyboardMarkup([
+                                [InlineKeyboardButton("🚀 Create without image", callback_data="exec_api")],
+                                [InlineKeyboardButton("❌ Cancel", callback_data="exec_cancel")],
+                            ]),
+                        )
+                    else:
+                        await query.message.reply_text(
+                            "⚠️ Image generation failed. You can still create the campaign:",
+                            reply_markup=InlineKeyboardMarkup(keyboard),
+                        )
+                else:
+                    await query.message.reply_text("What should I do?", reply_markup=InlineKeyboardMarkup(keyboard))
 
         except Exception as e:
             await query.message.reply_text(f"❌ Error generating campaign: {e}")
@@ -2249,6 +2536,67 @@ async def handle_approval(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         else:
             await query.edit_message_text("⚠️ Image not found. Try again or create without image.")
+        return
+
+    # ── GENERATE AI IMAGES (user chose AI over catalog images) ──
+    if action == "gen_ai_images":
+        campaign = pending_campaigns.get(user_id)
+        if not campaign:
+            await query.edit_message_text("⚠️ No pending campaign. Send a new brief.")
+            return
+
+        image_prompts = campaign.get("image_prompts", [])
+        if not image_prompts and campaign.get("image_prompt"):
+            image_prompts = [campaign["image_prompt"]]
+
+        if (HIGGSFIELD_API_KEY or TOGETHER_API_KEY) and image_prompts:
+            await query.edit_message_text("🎨 Generating AI images... (this takes ~30 seconds)")
+
+            generated_paths = generate_multiple_images(image_prompts[:3])
+            valid_images = [(i, p) for i, p in enumerate(generated_paths) if p]
+
+            if valid_images:
+                pending_images[user_id] = {
+                    "paths": generated_paths,
+                    "prompts": image_prompts,
+                }
+
+                for idx, path in valid_images:
+                    try:
+                        with open(path, "rb") as photo:
+                            await query.message.reply_photo(
+                                photo=photo,
+                                caption=f"🖼 AI Image {idx + 1}: {image_prompts[idx][:150]}...",
+                                reply_markup=InlineKeyboardMarkup([[
+                                    InlineKeyboardButton(f"✅ Use Image {idx + 1}", callback_data=f"pick_img_{idx}"),
+                                ]]),
+                            )
+                    except Exception as img_err:
+                        logger.error(f"Failed to send AI image {idx}: {img_err}")
+
+                await query.message.reply_text(
+                    "👆 Pick an image above, or:",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🚀 Create without image", callback_data="exec_api")],
+                        [InlineKeyboardButton("❌ Cancel", callback_data="exec_cancel")],
+                    ]),
+                )
+            else:
+                await query.message.reply_text(
+                    "⚠️ AI image generation failed. You can still create the campaign:",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🚀 Create via API", callback_data="exec_api")],
+                        [InlineKeyboardButton("❌ Cancel", callback_data="exec_cancel")],
+                    ]),
+                )
+        else:
+            await query.message.reply_text(
+                "⚠️ No image generation API configured (need HIGGSFIELD_API_KEY or TOGETHER_API_KEY).",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🚀 Create via API", callback_data="exec_api")],
+                    [InlineKeyboardButton("❌ Cancel", callback_data="exec_cancel")],
+                ]),
+            )
         return
 
     # ── GENERATE VIDEO FROM SELECTED IMAGE ──
