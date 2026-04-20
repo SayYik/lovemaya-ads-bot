@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-BOT_VERSION = "v5.4"  # Change this to verify Railway deploys the latest file
+BOT_VERSION = "v5.5"  # Change this to verify Railway deploys the latest file
 """
 Lovemaya Meta Ads Bot
 ======================
@@ -1450,7 +1450,7 @@ Keep it practical and actionable. Format clearly with numbers and emojis."""
 
 
 async def cmd_learn(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Research a competitor brand's ad strategy."""
+    """Research a competitor brand's ad strategy and save insights."""
     if not is_authorized(update.effective_user.id):
         await update.message.reply_text("Sorry, you're not authorized.")
         return
@@ -1458,13 +1458,13 @@ async def cmd_learn(update: Update, context: ContextTypes.DEFAULT_TYPE):
     brand_text = " ".join(context.args) if context.args else ""
     if not brand_text:
         await update.message.reply_text(
-            "🔍 Tell me a brand to study!\n\n"
+            "🔍 Tell me a brand to study! I'll research their ads and save the insights.\n\n"
             "Examples:\n"
             "/learn Sol de Janeiro\n"
             "/learn Glossier\n"
             "/learn CeraVe\n"
-            "/learn Dr. Squatch\n"
-            "/learn any Malaysian body care brand"
+            "/learn The Ordinary\n\n"
+            "📸 You can also send me a SCREENSHOT of any ad with the caption 'analyze this' — I'll break down the hooks, angles, and copy style."
         )
         return
 
@@ -1473,27 +1473,57 @@ async def cmd_learn(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
 
-        learn_prompt = f"""You are a DTC advertising analyst. Research and analyze the Meta/Instagram advertising strategy of: {brand_text}
+        # Get existing brand learnings for context
+        memories = load_memory()
+        brand_insights = [m for m in memories if m.get("type") == "brand_learning"]
+        existing_brands = ", ".join([m.get("brand", "") for m in brand_insights]) if brand_insights else "none yet"
 
-Focus on:
-1. Their brand positioning and unique selling points
-2. Ad copy angles they commonly use
-3. Visual style and creative formats
-4. Target audience and messaging approach
-5. What Lovemaya (Malaysian body care: bath gel, lotion, body mist, scrub) can LEARN and ADAPT from this brand
-6. Specific actionable takeaways — ad copy examples, angles to test, creative ideas
+        learn_prompt = f"""You are a DTC advertising analyst specializing in personal care and beauty brands.
+
+Research and analyze the Meta/Instagram advertising strategy of: {brand_text}
+
+Provide your analysis in TWO parts:
+
+PART 1 — BRAND ANALYSIS (for the user to read):
+1. Brand positioning and unique selling points
+2. Top 3 ad copy angles they use most (with real examples if possible)
+3. Visual style — lighting, colors, models, product placement
+4. Creative formats — static, video, carousel, UGC, KOL
+5. Target audience and messaging approach
+6. What makes their ads STOP the scroll
+
+PART 2 — ACTIONABLE INSIGHTS FOR LOVEMAYA (these will be saved):
+Write exactly 5 bullet points that Lovemaya can directly apply. Each bullet should be a specific, actionable insight — not generic advice. Format each as:
+• [ANGLE/HOOK TYPE]: [Specific thing to try] — Example: "[actual ad copy example adapted for Lovemaya]"
+
+Example format:
+• [SOCIAL PROOF]: Use "X people bought this week" counters — Example: "2,847 Malaysians switched to Love Maya this month"
+• [SENSORY]: Describe the scent/feel experience — Example: "Close your eyes. Imagine jasmine on warm skin."
 
 {DTC_KNOWLEDGE}
 
-Be specific and practical. Give examples of ad copy hooks that Lovemaya could adapt. Format with emojis for readability."""
+Brands already studied: {existing_brands}
+Be specific, practical, and give copy examples Lovemaya can test immediately."""
 
         message = client.messages.create(
             model="claude-sonnet-4-20250514",
-            max_tokens=2048,
+            max_tokens=3000,
             messages=[{"role": "user", "content": learn_prompt}]
         )
 
         analysis = message.content[0].text.strip()
+
+        # Save key insights to memory
+        insight_entry = {
+            "type": "brand_learning",
+            "brand": brand_text,
+            "date": datetime.now().strftime("%Y-%m-%d"),
+            "insights": analysis[-1500:]  # Save the actionable insights portion
+        }
+        add_memory(f"[BRAND STUDY: {brand_text}] {analysis[-800:]}")
+        logger.info(f"Saved brand insights for: {brand_text}")
+
+        # Send analysis
         if len(analysis) > 4000:
             parts = [analysis[i:i+4000] for i in range(0, len(analysis), 4000)]
             for part in parts:
@@ -1501,8 +1531,84 @@ Be specific and practical. Give examples of ad copy hooks that Lovemaya could ad
         else:
             await update.message.reply_text(f"🔍 Brand Analysis: {brand_text}\n\n{analysis}")
 
+        await update.message.reply_text(
+            f"✅ Insights from {brand_text} saved to memory!\n"
+            f"I'll reference these learnings when creating your future campaigns.\n\n"
+            f"🧠 Use /memory to see all saved insights."
+        )
+
     except Exception as e:
         await update.message.reply_text(f"Error: {e}")
+
+
+async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Analyze a competitor ad screenshot sent as a photo."""
+    if not is_authorized(update.effective_user.id):
+        return
+
+    caption = (update.message.caption or "").lower()
+    # Only trigger on photos with relevant captions
+    trigger_words = ["analyze", "analyse", "learn", "study", "break down", "breakdown", "what can i learn", "ad analysis"]
+    if not any(word in caption for word in trigger_words):
+        return  # Not an analysis request, ignore
+
+    await update.message.reply_text("🔍 Analyzing this ad...")
+
+    try:
+        # Download the photo (get highest resolution)
+        photo = update.message.photo[-1]  # Highest res
+        photo_file = await photo.get_file()
+        photo_bytes = await photo_file.download_as_bytearray()
+
+        import base64
+        photo_b64 = base64.b64encode(bytes(photo_bytes)).decode("utf-8")
+
+        client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
+
+        analyze_prompt = f"""You are a DTC ad creative analyst. Analyze this ad screenshot and extract actionable insights for Lovemaya (Malaysian body care brand: bath gel, body lotion, body mist, body scrub).
+
+Break down:
+1. HOOK — What stops the scroll? First 3 seconds / first line of text
+2. ANGLE — What persuasion angle is used? (social proof, FOMO, benefit-led, emotional, curiosity, etc.)
+3. COPY STRUCTURE — How is the text structured? (problem → solution, testimonial, list, story)
+4. VISUAL STYLE — Colors, composition, product placement, models, text overlay
+5. CTA — What action does it drive?
+6. WHAT WORKS — Why would this ad convert?
+7. LOVEMAYA ADAPTATION — Write 2 specific ad copy examples adapting this approach for Lovemaya products
+
+Caption from user: {update.message.caption or 'No caption provided'}
+
+Be specific and practical. Focus on what Lovemaya can steal and adapt."""
+
+        message = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=2000,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": photo_b64}},
+                    {"type": "text", "text": analyze_prompt}
+                ]
+            }]
+        )
+
+        analysis = message.content[0].text.strip()
+
+        # Save to memory
+        brand_hint = update.message.caption.replace("analyze", "").replace("this", "").strip() or "competitor ad"
+        add_memory(f"[AD SCREENSHOT ANALYSIS: {brand_hint}] {analysis[-500:]}")
+
+        if len(analysis) > 4000:
+            parts = [analysis[i:i+4000] for i in range(0, len(analysis), 4000)]
+            for part in parts:
+                await update.message.reply_text(part)
+        else:
+            await update.message.reply_text(f"🔍 Ad Analysis:\n\n{analysis}")
+
+        await update.message.reply_text("✅ Insights saved! I'll use these patterns in future campaigns.")
+
+    except Exception as e:
+        await update.message.reply_text(f"Error analyzing image: {e}")
 
 
 async def cmd_funnel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2037,6 +2143,7 @@ def main():
     app.add_handler(CommandHandler("memory", cmd_memory))
     app.add_handler(CommandHandler("forget", cmd_forget))
     app.add_handler(CallbackQueryHandler(handle_approval))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo_analysis))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_brief))
 
     print("Bot is running. Press Ctrl+C to stop.")
