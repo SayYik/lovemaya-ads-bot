@@ -1411,6 +1411,10 @@ async def cmd_debug(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Check image detection
     catalog = load_product_catalog()
+    catalog_count = len(catalog)
+    first_product = catalog[0] if catalog else {}
+    first_keywords = first_product.get("keywords", [])
+    first_name = first_product.get("name", "NONE")
     test_product = None
     test_images = []
     for p in catalog:
@@ -1418,6 +1422,13 @@ async def cmd_debug(update: Update, context: ContextTypes.DEFAULT_TYPE):
             test_product = p
             test_images = get_product_images(p, "ocean bath gel")
             break
+
+    # Also try raw catalog read
+    try:
+        with open(CATALOG_PATH, "r") as _f:
+            raw_first = _f.read(200)
+    except:
+        raw_first = "FAILED TO READ"
 
     await update.message.reply_text(
         f"🔧 DEBUG INFO:\n\n"
@@ -1429,6 +1440,11 @@ async def cmd_debug(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Catalog exists: {catalog_exists}\n"
         f"Files in products/: {len(products_files)}\n"
         f"Files: {', '.join(products_files[:5])}{'...' if len(products_files) > 5 else ''}\n\n"
+        f"🔍 CATALOG:\n"
+        f"Products loaded: {catalog_count}\n"
+        f"1st product: {first_name}\n"
+        f"1st keywords: {first_keywords}\n"
+        f"Raw catalog: {raw_first}\n\n"
         f"🔍 TEST DETECTION:\n"
         f"Bath gel found: {test_product is not None}\n"
         f"Ocean images: {len(test_images)}\n"
