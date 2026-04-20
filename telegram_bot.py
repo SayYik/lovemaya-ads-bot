@@ -169,8 +169,22 @@ pending_product_selection = {}
 # PRODUCT CATALOG — auto-matches products from brief
 # ─────────────────────────────────────────────
 
-PRODUCTS_DIR = os.path.join(os.path.dirname(__file__), "products")
+SCRIPT_DIR = os.path.dirname(__file__)
+PRODUCTS_DIR = os.path.join(SCRIPT_DIR, "products")
 CATALOG_PATH = os.path.join(PRODUCTS_DIR, "catalog.json")
+
+
+def find_image(img_name: str) -> str | None:
+    """Find an image file — checks products/ folder first, then root directory."""
+    # Check products/ subfolder first
+    path1 = os.path.join(PRODUCTS_DIR, img_name)
+    if os.path.exists(path1):
+        return path1
+    # Check root directory (where GitHub web upload puts files)
+    path2 = os.path.join(SCRIPT_DIR, img_name)
+    if os.path.exists(path2):
+        return path2
+    return None
 
 
 def load_product_catalog() -> list:
@@ -219,8 +233,8 @@ def get_product_images(product: dict, brief_text: str = "") -> list:
             if variant_name in brief_lower:
                 available = []
                 for img_name in variant_images:
-                    img_path = os.path.join(PRODUCTS_DIR, img_name)
-                    if os.path.exists(img_path):
+                    img_path = find_image(img_name)
+                    if img_path:
                         available.append(img_path)
                 if available:
                     logger.info(f"Variant matched: {variant_name} ({len(available)} images)")
@@ -229,8 +243,8 @@ def get_product_images(product: dict, brief_text: str = "") -> list:
     # No variant match — return all product images
     available = []
     for img_name in product.get("images", []):
-        img_path = os.path.join(PRODUCTS_DIR, img_name)
-        if os.path.exists(img_path):
+        img_path = find_image(img_name)
+        if img_path:
             available.append(img_path)
     return available
 
