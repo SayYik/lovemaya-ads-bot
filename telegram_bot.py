@@ -1396,6 +1396,21 @@ def trigger_manus(instructions: str) -> dict:
 # TELEGRAM HANDLERS
 # ─────────────────────────────────────────────
 
+async def cmd_debug(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Debug env vars."""
+    import os as _os
+    meta_vars = {k: v[:8] + "..." if len(v) > 8 else v for k, v in _os.environ.items() if "META" in k or "PIXEL" in k}
+    raw_pixel = _os.getenv("META_PIXEL_ID", "<NOT FOUND>")
+    await update.message.reply_text(
+        f"🔧 DEBUG ENV VARS:\n\n"
+        f"META_PIXEL_ID raw: '{raw_pixel}'\n"
+        f"META_PIXEL_ID var: '{META_PIXEL_ID}'\n"
+        f"len: {len(raw_pixel)}\n"
+        f"repr: {repr(raw_pixel)}\n\n"
+        f"All META vars:\n" + "\n".join(f"  {k}={v}" for k, v in meta_vars.items())
+    )
+
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Welcome message."""
     user = update.effective_user
@@ -3322,6 +3337,7 @@ def main():
 
     # Register handlers
     app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("debug", cmd_debug))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("ideas", cmd_ideas))
