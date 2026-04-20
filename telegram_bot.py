@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-BOT_VERSION = "v5.1"  # Change this to verify Railway deploys the latest file
+BOT_VERSION = "v5.2"  # Change this to verify Railway deploys the latest file
 """
 Lovemaya Meta Ads Bot
 ======================
@@ -744,12 +744,11 @@ class MetaAdsExecutor:
 
     def _post(self, endpoint, data):
         data["access_token"] = self.token
-        # Only set bid_strategy on AD SETS, never on campaigns
-        # (campaign-level bid_strategy confuses Meta for ABO campaigns)
+        # Remove any bid_amount/bid_cap from adsets (CBO handles bidding at campaign level)
         if "adsets" in endpoint:
-            data["bid_strategy"] = "LOWEST_COST_WITHOUT_CAP"
             data.pop("bid_amount", None)
             data.pop("bid_cap", None)
+            data.pop("bid_strategy", None)
         # Convert Python booleans to string for form encoding
         for key, value in list(data.items()):
             if isinstance(value, bool):
@@ -895,6 +894,7 @@ class MetaAdsExecutor:
                 "special_ad_categories": json.dumps([]),
                 "daily_budget": daily_budget,
                 "is_campaign_budget_optimization_on": "true",
+                "bid_strategy": "LOWEST_COST_WITHOUT_CAP",
             }
             logger.info(f"CBO mode: daily_budget {daily_budget} on campaign, Meta distributes to ad sets")
 
